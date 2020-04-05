@@ -1,0 +1,36 @@
+{
+  "projectName": "go.ansible",
+  "projectOwner": "arillso",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": [
+    "README.md"
+  ],
+  "imageSize": 100,
+  "commit": false,
+  "commitConvention": "none",
+  "contributors": [
+    {
+      "login": "sbaerlocher",
+      "name": "Simon Baerlocher",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/4160387?v=4",
+      "profile": "https://sbaerlocher.ch",
+      "contributions": [
+        "code",
+        "ideas"
+      ]
+    },
+    {
+      "login": "mleutenegger",
+      "name": "Matthias Leutenegger",
+      "avatar_url": "https://avatars2.githubusercontent.com/u/1339379?v=4",
+      "profile": "https://github.com/mleutenegger",
+      "contributions": [
+        "code",
+        "review",
+        "ideas"
+      ]
+    }
+  ],
+  "contributorsPerLine": 7
+}
