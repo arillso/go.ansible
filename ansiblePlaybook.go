@@ -96,6 +96,7 @@ func (p *AnsiblePlaybook) Exec() error {
 
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, "ANSIBLE_FORCE_COLOR=1")
+		cmd.Env = append(cmd.Env, "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
 
 		trace(cmd)
 

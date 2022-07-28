@@ -2,7 +2,6 @@
 
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?style=popout-square)](https://sbaerlo.ch/licence) ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/arillso/go.ansible?style=popout-square) ![GitHub release](https://img.shields.io/github/v/release/arillso/go.ansible?style=popout-square) [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/arillso/go.ansible?tab=doc) [![Go Report Card](https://goreportcard.com/badge/github.com/arillso/go.ansible)](https://goreportcard.com/report/github.com/arillso/go.ansible)
 
-
 ## Description
 
 Go module for running Ansible Commandors on a Linux system.
@@ -11,7 +10,7 @@ Go module for running Ansible Commandors on a Linux system.
 
 - [Ansible Playbook Action](https://github.com/arillso/action.playbook)
 
-## Contributors 
+## Contributors
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -25,6 +24,7 @@ Go module for running Ansible Commandors on a Linux system.
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ## License
@@ -37,4 +37,4 @@ This project is under the MIT License. See the [LICENSE](licence) file for the f
 
 ## Copyright
 
-(c) 2020, Arillso
+(c) 2022, Arillso
