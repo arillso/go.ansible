@@ -190,7 +190,7 @@ func (p *AnsiblePlaybook) galaxyRoleCommand() *exec.Cmd {
 		p.Config.GalaxyFile,
 	}
 
-	if p.config.GalaxyForce {
+	if p.Config.GalaxyForce {
 		args = append(args, "--force")
 	}
 
@@ -212,9 +212,10 @@ func (p *AnsiblePlaybook) galaxyCollectionCommand() *exec.Cmd {
 		p.Config.GalaxyFile,
 	}
 
-	if p.config.GalaxyForce {
+	if p.Config.GalaxyForce {
 		args = append(args, "--force")
 	}
+
 
 	if p.Config.Verbose > 0 {
 		args = append(args, fmt.Sprintf("-%s", strings.Repeat("v", p.Config.Verbose)))
