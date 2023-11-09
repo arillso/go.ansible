@@ -16,6 +16,7 @@ type (
 	Config struct {
 		Requirements      string
 		GalaxyFile        string
+		GalaxyForce		  bool
 		Inventories       []string
 		Playbooks         []string
 		Limit             string
@@ -189,6 +190,10 @@ func (p *AnsiblePlaybook) galaxyRoleCommand() *exec.Cmd {
 		p.Config.GalaxyFile,
 	}
 
+	if p.config.GalaxyForce {
+		args = append(args, "--force")
+	}
+
 	if p.Config.Verbose > 0 {
 		args = append(args, fmt.Sprintf("-%s", strings.Repeat("v", p.Config.Verbose)))
 	}
@@ -205,6 +210,10 @@ func (p *AnsiblePlaybook) galaxyCollectionCommand() *exec.Cmd {
 		"install",
 		"--requirements-file",
 		p.Config.GalaxyFile,
+	}
+
+	if p.config.GalaxyForce {
+		args = append(args, "--force")
 	}
 
 	if p.Config.Verbose > 0 {
