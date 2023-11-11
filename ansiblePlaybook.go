@@ -2,7 +2,6 @@ package ansible
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,50 +11,64 @@ import (
 	"github.com/pkg/errors"
 )
 
-type (
-	Config struct {
-		Requirements      string
-		GalaxyFile        string
-		GalaxyForce		  bool
-		Inventories       []string
-		Playbooks         []string
-		Limit             string
-		SkipTags          string
-		StartAtTask       string
-		Tags              string
-		ExtraVars         []string
-		ModulePath        []string
-		Check             bool
-		Diff              bool
-		FlushCache        bool
-		ForceHandlers     bool
-		ListHosts         bool
-		ListTags          bool
-		ListTasks         bool
-		SyntaxCheck       bool
-		Forks             int
-		VaultID           string
-		VaultPassword     string
-		VaultPasswordFile string
-		Verbose           int
-		PrivateKey        string
-		PrivateKeyFile    string
-		User              string
-		Connection        string
-		Timeout           int
-		SSHCommonArgs     string
-		SFTPExtraArgs     string
-		SCPExtraArgs      string
-		SSHExtraArgs      string
-		Become            bool
-		BecomeMethod      string
-		BecomeUser        string
-	}
+type Config struct {
+	Become                            bool
+	BecomeMethod                      string
+	BecomeUser                        string
+	Check                             bool
+	Connection                        string
+	Diff                              bool
+	ExtraVars                         []string
+	FlushCache                        bool
+	ForceHandlers                     bool
+	Forks                             int
+	GalaxyAPIKey                      string
+	GalaxyAPIServerURL                string
+	GalaxyCollectionsPath             string
+	GalaxyDisableGPGVerify            bool
+	GalaxyFile                        string
+	GalaxyForce                       bool
+	GalaxyForceWithDeps               bool
+	GalaxyIgnoreCerts                 bool
+	GalaxyIgnoreSignatureStatusCodes  []string
+	GalaxyKeyring                     string
+	GalaxyOffline                     bool
+	GalaxyPre                         bool
+	GalaxyRequiredValidSignatureCount int
+	GalaxyRequirementsFile            string
+	GalaxySignature                   string
+	GalaxyTimeout                     int
+	GalaxyUpgrade                     bool
+	GalaxyNoDeps                      bool
+	Inventories                       []string
+	Limit                             string
+	ListHosts                         bool
+	ListTags                          bool
+	ListTasks                         bool
+	ModulePath                        []string
+	Playbooks                         []string
+	PrivateKey                        string
+	PrivateKeyFile                    string
+	Requirements                      string
+	SCPExtraArgs                      string
+	SFTPExtraArgs                     string
+	SkipTags                          string
+	SSHCommonArgs                     string
+	SSHExtraArgs                      string
+	StartAtTask                       string
+	SyntaxCheck                       bool
+	Tags                              string
+	Timeout                           int
+	User                              string
+	VaultID                           string
+	VaultPassword                     string
+	VaultPasswordFile                 string
+	Verbose                           int
+}
 
-	AnsiblePlaybook struct {
-		Config Config
-	}
-)
+type AnsiblePlaybook struct {
+	Config Config
+}
 
 func (p *AnsiblePlaybook) Exec() error {
 	if err := p.playbooks(); err != nil {
@@ -110,8 +123,7 @@ func (p *AnsiblePlaybook) Exec() error {
 }
 
 func (p *AnsiblePlaybook) privateKey() error {
-	tmpfile, err := ioutil.TempFile("", "privateKey")
-
+	tmpfile, err := os.CreateTemp("", "privateKey")
 	if err != nil {
 		return errors.Wrap(err, "failed to create private key file")
 	}
@@ -129,8 +141,7 @@ func (p *AnsiblePlaybook) privateKey() error {
 }
 
 func (p *AnsiblePlaybook) vaultPass() error {
-	tmpfile, err := ioutil.TempFile("", "vaultPass")
-
+	tmpfile, err := os.CreateTemp("", "vaultPass")
 	if err != nil {
 		return errors.Wrap(err, "failed to create vault password file")
 	}
@@ -190,8 +201,32 @@ func (p *AnsiblePlaybook) galaxyRoleCommand() *exec.Cmd {
 		p.Config.GalaxyFile,
 	}
 
+	if p.Config.GalaxyAPIServerURL != "" {
+		args = append(args, "--server", p.Config.GalaxyAPIServerURL)
+	}
+
+	if p.Config.GalaxyAPIKey != "" {
+		args = append(args, "--api-key", p.Config.GalaxyAPIKey)
+	}
+
+	if p.Config.GalaxyIgnoreCerts {
+		args = append(args, "--ignore-certs")
+	}
+
+	if p.Config.GalaxyTimeout != 0 {
+		args = append(args, "--timeout", strconv.Itoa(p.Config.GalaxyTimeout))
+	}
+
 	if p.Config.GalaxyForce {
 		args = append(args, "--force")
+	}
+
+	if p.Config.GalaxyNoDeps {
+		args = append(args, "--no-deps")
+	}
+
+	if p.Config.GalaxyForceWithDeps {
+		args = append(args, "--force-with-deps")
 	}
 
 	if p.Config.Verbose > 0 {
@@ -212,13 +247,49 @@ func (p *AnsiblePlaybook) galaxyCollectionCommand() *exec.Cmd {
 		p.Config.GalaxyFile,
 	}
 
+	if p.Config.GalaxyAPIServerURL != "" {
+		args = append(args, "--server", p.Config.GalaxyAPIServerURL)
+	}
+
+	if p.Config.GalaxyAPIKey != "" {
+		args = append(args, "--api-key", p.Config.GalaxyAPIKey)
+	}
+
+	if p.Config.GalaxyIgnoreCerts {
+		args = append(args, "--ignore-certs")
+	}
+
+	if p.Config.GalaxyTimeout != 0 {
+		args = append(args, "--timeout", strconv.Itoa(p.Config.GalaxyTimeout))
+	}
+
+	if p.Config.GalaxyForceWithDeps {
+		args = append(args, "--force-with-deps")
+	}
+
+	if p.Config.GalaxyCollectionsPath != "" {
+		args = append(args, "--collections-path", p.Config.GalaxyCollectionsPath)
+	}
+
+	if p.Config.GalaxyRequirementsFile != "" {
+		args = append(args, "--requirements-file", p.Config.GalaxyRequirementsFile)
+	}
+
+	if p.Config.GalaxyPre {
+		args = append(args, "--pre")
+	}
+
+	if p.Config.GalaxyUpgrade {
+		args = append(args, "--upgrade")
+	}
+
 	if p.Config.GalaxyForce {
 		args = append(args, "--force")
 	}
 
-
 	if p.Config.Verbose > 0 {
-		args = append(args, fmt.Sprintf("-%s", strings.Repeat("v", p.Config.Verbose)))
+		verboseFlag := fmt.Sprintf("-%s", strings.Repeat("v", p.Config.Verbose))
+		args = append(args, verboseFlag)
 	}
 
 	return exec.Command(
@@ -358,7 +429,8 @@ func (p *AnsiblePlaybook) ansibleCommand(inventory string) *exec.Cmd {
 	}
 
 	if p.Config.Verbose > 0 {
-		args = append(args, fmt.Sprintf("-%s", strings.Repeat("v", p.Config.Verbose)))
+		verboseFlag := fmt.Sprintf("-%s", strings.Repeat("v", p.Config.Verbose))
+		args = append(args, verboseFlag)
 	}
 
 	args = append(args, p.Config.Playbooks...)
