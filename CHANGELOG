@@ -5,6 +5,58 @@ and [human-readable changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Renaming and Refactoring of the Main Structure:**
+  - The previous structure **`AnsiblePlaybook`** has been removed and replaced with the new **`Playbook`** structure.
+  This change requires updates in any code that previously referenced `AnsiblePlaybook`.
+
+- **Changed Method Signature:**
+  - The **`Exec`** method now requires a `context.Context` parameter. Existing calls without this context will no longer work.
+
+- **Reorganization of the `Config` Struct:**
+  - The configuration structure has been reorganized. Many fields have been added, renamed, or grouped
+  into categories (General, SSH, Playbook, Vault, Facts, Galaxy, etc.). As a result, existing configurations
+  must be updated (e.g., options such as `User`, `AskPass`, `SyntaxCheck`, and various Galaxy-related parameters are now structured differently).
+
+### Added
+
+- **Extended Configuration Options:**
+  - New fields added to the `Config` struct for SSH, Vault, Facts, and Galaxy integration (`PrivateKey`, `VaultPassword`, `GalaxyAPIServerURL`, `GalaxyCollectionsPath`, etc.).
+  - Additional parameters such as `CallbackWhitelist`, `PollInterval`, `GatherSubset`, and `StrategyPlugin`.
+
+- **New Helper Functions:**
+  - Added functions:
+    - `resolvePlaybooks` for resolving file patterns.
+    - `prepareTempFiles` and `cleanupTempFiles` for managing temporary files.
+    - Utility functions for command construction (`applyOption`, `addVerbose`, `appendExtraVars`).
+
+- **Improved Test Coverage:**
+  - Comprehensive unit tests for new functionalities including playbook resolution, temporary file handling, environment variable management, and command building.
+
+### Changed
+
+- **Command Building and Execution:**
+  - Implemented a new approach for building commands (`ansible-playbook` and `ansible-galaxy`) using context-based calls (`exec.CommandContext`)
+  and dynamically setting environment variables.
+  - Enhanced error handling utilizing the `github.com/pkg/errors` package.
+
+- **Documentation and Code Comments:**
+  - Updated and expanded documentation within the codebase and README to clearly reflect new features and API changes.
+
+- **Go Version Update:**
+  - Updated Go version in `go.mod` from **1.18** to **1.23**.
+
+### Removed
+
+- **Deprecated Files and Structures:**
+  - Removed **`.all-contributorsrc`** file.
+  - Deleted test playbook file **`tests/test.yml`**.
+
+- **Redundant Code:**
+  - Cleaned up outdated variables, comments, and redundant code segments.
+
+
 ## [0.1.0] - 11 Nov 2023
 
 ### Added
