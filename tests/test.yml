@@ -1,8 +1,0 @@
----
-- name: "Check Ansible Connection via SSH"
-  hosts: localhost
-  connection: local
-  gather_facts: true
-  tasks:
-      - name: "Test Connection to Hosts"
-        ansible.builtin.ping:
