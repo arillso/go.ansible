@@ -1,4 +1,4 @@
-module github.com/arillso/go.ansible
+module github.com/arillso/go.ansible/refactor/ansible-execution-module
 
 go 1.23
 
