@@ -1,18 +1,51 @@
 {
         "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-        "prCreation": "immediate",
-        "extends": ["config:best-practices"],
-        "dependencyDashboard": true,
-        "schedule": ["on friday"],
-        "platformAutomerge": false,
-        "rangeStrategy": "update-lockfile",
-        "rebaseLabel": "renovate::rebase",
-        "rebaseWhen": "never",
-        "skipInstalls": true,
-        "updatePinnedDependencies": false,
-        "ignoreScripts": false,
-        "lockFileMaintenance": {
+        "extends": [
+                "config:recommended",
+                "config:best-practices",
+                ":dependencyDashboard",
+                ":maintainLockFilesWeekly",
+                ":semanticCommits"
+        ],
+        "timezone": "Europe/Zurich",
+        "schedule": ["before 5am on friday"],
+        "prHourlyLimit": 2,
+        "prConcurrentLimit": 10,
+        "labels": ["dependencies"],
+        "updatePinnedDependencies": true,
+        "packageRules": [
+                {
+                        "description": "Weekly GitHub Actions updates",
+                        "matchManagers": ["github-actions"],
+                        "matchUpdateTypes": ["major", "minor", "patch"],
+                        "groupName": "GitHub Actions",
+                        "reviewers": ["sbaerlocher"],
+                        "assignees": ["sbaerlocher"],
+                        "commitMessagePrefix": "chore(deps)"
+                },
+                {
+                        "description": "Golang dependencies management",
+                        "matchManagers": ["gomod"],
+                        "matchFileNames": ["**/*.go", "go.mod", "go.sum"],
+                        "groupName": "golang dependencies",
+                        "reviewers": ["sbaerlocher"],
+                        "assignees": ["sbaerlocher"],
+                        "prPriority": 1,
+                        "commitMessagePrefix": "fix(deps)"
+                },
+                {
+                        "description": "Security vulnerability alerts",
+                        "matchCategories": ["security"],
+                        "prPriority": 2,
+                        "labels": ["dependencies", "security"],
+                        "assignees": ["sbaerlocher"]
+                }
+        ],
+        "vulnerabilityAlerts": {
                 "enabled": true,
-                "schedule": ["before 4am on monday"]
+                "labels": ["dependencies", "security"]
+        },
+        "major": {
+                "labels": ["dependencies", "breaking"]
         }
 }
