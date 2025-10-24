@@ -44,7 +44,7 @@ jobs:
 
             - name: Archive production artifacts
               if: success() || failure()
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
               with:
                   name: MegaLinter reports
                   path: |
@@ -91,7 +91,7 @@ jobs:
                   env.APPLY_FIXES_MODE == 'commit' && github.ref != 'refs/heads/main' &&
                   (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
                   !contains(github.event.head_commit.message, 'skip fix')
-              uses: stefanzweifel/git-auto-commit-action@778341af668090896ca464160c2def5d1d1a3eb0 # v6
+              uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7
               with:
                   branch: ${{ github.event.pull_request.head.ref || github.head_ref || github.ref }}
                   commit_message: "[MegaLinter] Apply linters fixes"
