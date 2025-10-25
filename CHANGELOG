@@ -5,7 +5,16 @@ and [human-readable changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## [1.0.0] - 13 April 2025
+### Added
+
+- **Ansible Collection Playbook Support:**
+  - Added support for running playbooks from Ansible Collections using FQCN (Fully Qualified Collection Name) format.
+  - Collection playbooks can now be specified using the format `namespace.collection.playbook_name` without requiring local files.
+  - The `resolvePlaybooks` function now automatically detects and handles collection playbook references.
+  - Added `isCollectionPlaybook` helper function to distinguish between local file paths and collection FQCNs.
+  - Maintains full backward compatibility with local playbook files, glob patterns, and relative/absolute paths.
+
+## [1.0.0] - 13  2023
 
 ### Breaking Changes
 

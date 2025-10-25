@@ -30,6 +30,32 @@ func getInventoryHost() string {
 	return host
 }
 
+// TestIsCollectionPlaybook tests the detection of collection playbook references.
+func TestIsCollectionPlaybook(t *testing.T) {
+	tests := []struct {
+		name     string
+		ref      string
+		expected bool
+	}{
+		{"Collection FQCN", "namespace.collection.playbook", true},
+		{"Collection FQCN with underscores", "my_namespace.my_collection.my_playbook", true},
+		{"Simple filename", "playbook.yml", false},
+		{"Relative path", "./playbooks/site.yml", false},
+		{"Absolute path", "/etc/ansible/playbook.yml", false},
+		{"No dots", "playbook", false},
+		{"Glob pattern", "*.yml", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isCollectionPlaybook(tt.ref)
+			if result != tt.expected {
+				t.Errorf("isCollectionPlaybook(%q) = %v, expected %v", tt.ref, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestResolvePlaybooks tests that playbook paths are correctly resolved.
 func TestResolvePlaybooks(t *testing.T) {
 	// Create a temporary directory using os.MkdirTemp.
@@ -63,6 +89,72 @@ func TestResolvePlaybooks(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Expected playbook file %s was not found in the resolved paths", playbookPath)
+	}
+}
+
+// TestResolveCollectionPlaybooks tests that collection playbook references are handled correctly.
+func TestResolveCollectionPlaybooks(t *testing.T) {
+	pb := NewPlaybook()
+	collectionPlaybook := "namespace.collection.playbook"
+	pb.Config.Playbooks = []string{collectionPlaybook}
+
+	if err := pb.resolvePlaybooks(); err != nil {
+		t.Fatalf("resolvePlaybooks failed for collection playbook: %v", err)
+	}
+
+	// Check if the collection playbook is preserved in the resolved list.
+	if len(pb.Config.Playbooks) != 1 {
+		t.Fatalf("Expected 1 playbook, got %d", len(pb.Config.Playbooks))
+	}
+	if pb.Config.Playbooks[0] != collectionPlaybook {
+		t.Errorf("Expected playbook %q, got %q", collectionPlaybook, pb.Config.Playbooks[0])
+	}
+}
+
+// TestResolveMixedPlaybooks tests resolving both local files and collection playbooks.
+func TestResolveMixedPlaybooks(t *testing.T) {
+	// Create a temporary directory.
+	tempDir, err := os.MkdirTemp("", "test-mixed-playbook")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create a local playbook file.
+	localPlaybook := filepath.Join(tempDir, "local.yml")
+	if err := os.WriteFile(localPlaybook, []byte("dummy content"), 0644); err != nil {
+		t.Fatalf("Failed to write dummy playbook file: %v", err)
+	}
+
+	pb := NewPlaybook()
+	collectionPlaybook := "namespace.collection.playbook"
+	pb.Config.Playbooks = []string{localPlaybook, collectionPlaybook}
+
+	if err := pb.resolvePlaybooks(); err != nil {
+		t.Fatalf("resolvePlaybooks failed for mixed playbooks: %v", err)
+	}
+
+	// Check that both playbooks are in the resolved list.
+	if len(pb.Config.Playbooks) != 2 {
+		t.Fatalf("Expected 2 playbooks, got %d", len(pb.Config.Playbooks))
+	}
+
+	foundLocal := false
+	foundCollection := false
+	for _, p := range pb.Config.Playbooks {
+		if p == localPlaybook {
+			foundLocal = true
+		}
+		if p == collectionPlaybook {
+			foundCollection = true
+		}
+	}
+
+	if !foundLocal {
+		t.Errorf("Expected local playbook %q not found in resolved list", localPlaybook)
+	}
+	if !foundCollection {
+		t.Errorf("Expected collection playbook %q not found in resolved list", collectionPlaybook)
 	}
 }
 

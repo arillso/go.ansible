@@ -127,7 +127,45 @@ func (p *Playbook) Exec(ctx context.Context) error {
 	return p.runCommands(ctx, cmds)
 }
 
+// isCollectionPlaybook checks if a playbook reference is a collection FQCN.
+// Collection playbooks follow the format: namespace.collection.playbook_name
+// They must have at least two dots and not be local files or common file patterns.
+func isCollectionPlaybook(ref string) bool {
+	// If it exists as a file, it's not a collection reference
+	if _, err := os.Stat(ref); err == nil {
+		return false
+	}
+
+	// Check if it matches any files as a glob pattern
+	if files, err := filepath.Glob(ref); err == nil && len(files) > 0 {
+		return false
+	}
+
+	// If it contains common path separators, it's likely a file path
+	if strings.Contains(ref, string(os.PathSeparator)) {
+		return false
+	}
+
+	// Collection FQCNs have at least 2 dots (namespace.collection.playbook)
+	dotCount := strings.Count(ref, ".")
+	if dotCount < 2 {
+		return false
+	}
+
+	// Check for common file extensions that indicate it's a file, not a collection
+	commonExtensions := []string{".yml", ".yaml", ".json", ".xml"}
+	for _, ext := range commonExtensions {
+		if strings.HasSuffix(ref, ext) {
+			return false
+		}
+	}
+
+	// At this point, it looks like a collection FQCN
+	return true
+}
+
 // resolvePlaybooks resolves playbook patterns into concrete file paths and validates their existence.
+// It also supports Ansible Collection playbook references in FQCN format (namespace.collection.playbook_name).
 func (p *Playbook) resolvePlaybooks() error {
 	if len(p.Config.Playbooks) == 0 {
 		return errors.New("no playbooks specified")
@@ -135,6 +173,13 @@ func (p *Playbook) resolvePlaybooks() error {
 
 	var playbooks []string
 	for _, pattern := range p.Config.Playbooks {
+		// Check if this is a collection playbook reference
+		if isCollectionPlaybook(pattern) {
+			playbooks = append(playbooks, pattern)
+			continue
+		}
+
+		// Try to resolve as glob pattern
 		if files, err := filepath.Glob(pattern); err == nil && len(files) > 0 {
 			for _, file := range files {
 				if _, err := os.Stat(file); err == nil {
@@ -144,6 +189,7 @@ func (p *Playbook) resolvePlaybooks() error {
 				}
 			}
 		} else if _, err := os.Stat(pattern); err == nil {
+			// Try as direct file path
 			playbooks = append(playbooks, pattern)
 		} else {
 			return errors.Errorf("playbook not found: %s", pattern)
