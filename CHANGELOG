@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-10-25
+
+### Added
+
+- SSH key format validation in `writeTempFile()` to detect invalid PEM format early
+- New `isValidSSHKey()` function to validate SSH private keys with matching BEGIN/END marker validation
+- Support for all common SSH key formats: RSA, OpenSSH, EC, DSA, and generic PRIVATE KEY
+- Comprehensive test suite with 32 new test cases for SSH key validation and normalization
+- `TestWriteTempFileLineEndings` test function with 5 scenarios for line ending normalization
+- `TestWriteTempFileSSHKeyValidation` test function with 13 scenarios for key validation
+- `TestIsValidSSHKey` test function with 14 scenarios for format validation
+- Security scanner configurations (`.gitleaks.toml`, `.secretlintignore`) to properly handle test fixtures
+
+### Fixed
+
+- SSH key line ending normalization: CRLF (Windows) line endings are now automatically converted to LF (Unix)
+- Trailing newline handling: SSH keys now always end with a newline as required by PEM format (RFC 7468)
+- Invalid SSH key detection: Keys with missing or malformed PEM markers are now rejected with clear error messages
+- Compatibility with GitHub Secrets on Windows: Keys stored in GitHub Secrets with CRLF line endings now work correctly
+
+### Changed
+
+- Enhanced `writeTempFile()` function to normalize content before writing
+- Updated `TestPrepareTempFiles` to use valid PEM-formatted SSH keys
+- Improved error messages for SSH key validation failures
+
+### Security
+
+- Early detection of invalid SSH keys prevents potential SSH connection failures
+- Better validation reduces the risk of using malformed credentials
+
+[1.2.0]: https://github.com/arillso/go.ansible/compare/v1.1.0...v1.2.0
+
 ## [1.1.0] - 2025-10-25
 
 ### Added

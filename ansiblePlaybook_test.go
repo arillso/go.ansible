@@ -169,7 +169,8 @@ func TestPrepareTempFiles(t *testing.T) {
 	pb := NewPlaybook()
 	pb.Config.TempDir = tempDir
 
-	privateKeyContent := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."
+	// Use a valid PEM-formatted private key for testing
+	privateKeyContent := "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----"
 	vaultPasswordContent := "my_vault_password"
 	pb.Config.PrivateKey = privateKeyContent
 	pb.Config.VaultPassword = vaultPasswordContent
@@ -179,21 +180,25 @@ func TestPrepareTempFiles(t *testing.T) {
 	}
 
 	// Verify the content of the private key file.
+	// Note: writeTempFile adds a trailing newline
 	data, err := os.ReadFile(pb.Config.PrivateKeyFile)
 	if err != nil {
 		t.Fatalf("Failed to read the private key file: %v", err)
 	}
-	if string(data) != privateKeyContent {
-		t.Errorf("Private key file content mismatch, expected %q, got %q", privateKeyContent, string(data))
+	expectedPrivateKey := privateKeyContent + "\n"
+	if string(data) != expectedPrivateKey {
+		t.Errorf("Private key file content mismatch, expected %q, got %q", expectedPrivateKey, string(data))
 	}
 
 	// Verify the content of the vault password file.
+	// Note: writeTempFile adds a trailing newline
 	data, err = os.ReadFile(pb.Config.VaultPasswordFile)
 	if err != nil {
 		t.Fatalf("Failed to read the vault password file: %v", err)
 	}
-	if string(data) != vaultPasswordContent {
-		t.Errorf("Vault password file content mismatch, expected %q, got %q", vaultPasswordContent, string(data))
+	expectedVaultPassword := vaultPasswordContent + "\n"
+	if string(data) != expectedVaultPassword {
+		t.Errorf("Vault password file content mismatch, expected %q, got %q", expectedVaultPassword, string(data))
 	}
 
 	// Check that temporary files are removed after cleanup.
@@ -376,8 +381,9 @@ func TestWriteTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read temporary file: %v", err)
 	}
-	if string(data) != content {
-		t.Errorf("Expected content %q, got: %q", content, string(data))
+	expectedContent := content + "\n" // writeTempFile adds a trailing newline
+	if string(data) != expectedContent {
+		t.Errorf("Expected content %q, got: %q", expectedContent, string(data))
 	}
 
 	// Verify file permissions.
@@ -388,6 +394,292 @@ func TestWriteTempFile(t *testing.T) {
 	perm, _ := strconv.ParseUint(strconv.FormatUint(uint64(info.Mode().Perm()), 8), 10, 32)
 	if perm != 600 {
 		t.Errorf("Expected file permission 0600, got: %v", info.Mode().Perm())
+	}
+}
+
+// TestWriteTempFileLineEndings verifies that writeTempFile normalizes line endings
+// and ensures a trailing newline for SSH keys and other sensitive files.
+func TestWriteTempFileLineEndings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "CRLF to LF conversion",
+			input:    "line1\r\nline2\r\nline3",
+			expected: "line1\nline2\nline3\n",
+		},
+		{
+			name:     "Content without trailing newline",
+			input:    "content without newline",
+			expected: "content without newline\n",
+		},
+		{
+			name:     "Content with trailing newline",
+			input:    "content with newline\n",
+			expected: "content with newline\n",
+		},
+		{
+			name:     "Mixed line endings",
+			input:    "line1\r\nline2\nline3\r\n",
+			expected: "line1\nline2\nline3\n",
+		},
+		{
+			name:     "SSH private key with CRLF",
+			input:    "-----BEGIN RSA PRIVATE KEY-----\r\nTEST-KEY-DATA\r\n-----END RSA PRIVATE KEY-----",
+			expected: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir, err := os.MkdirTemp("", "test-line-endings")
+			if err != nil {
+				t.Fatalf("Failed to create temporary directory: %v", err)
+			}
+			defer os.RemoveAll(tempDir)
+
+			file, err := writeTempFile(tempDir, "test-", tt.input, 0600)
+			if err != nil {
+				t.Fatalf("writeTempFile failed: %v", err)
+			}
+
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("Failed to read temporary file: %v", err)
+			}
+
+			if string(data) != tt.expected {
+				t.Errorf("Expected content %q, got: %q", tt.expected, string(data))
+			}
+		})
+	}
+}
+
+// TestWriteTempFileSSHKeyValidation verifies that writeTempFile validates SSH key format.
+func TestWriteTempFileSSHKeyValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		prefix  string
+		content string
+		wantErr bool
+	}{
+		{
+			name:    "Valid RSA key with LF endings",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----\n",
+			wantErr: false,
+		},
+		{
+			name:    "Valid RSA key with CRLF endings (Windows)",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN RSA PRIVATE KEY-----\r\nTEST-KEY-DATA\r\n-----END RSA PRIVATE KEY-----\r\n",
+			wantErr: false,
+		},
+		{
+			name:    "Valid key without trailing newline",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----",
+			wantErr: false,
+		},
+		{
+			name:    "Valid OpenSSH format key",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----\n",
+			wantErr: false,
+		},
+		{
+			name:    "Valid EC private key",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN EC PRIVATE KEY-----\nTEST-KEY-DATA\n-----END EC PRIVATE KEY-----\n",
+			wantErr: false,
+		},
+		{
+			name:    "Valid generic private key",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN PRIVATE KEY-----\nTEST-KEY-DATA\n-----END PRIVATE KEY-----\n",
+			wantErr: false,
+		},
+		{
+			name:    "Invalid key - missing BEGIN marker",
+			prefix:  "ansible-key-",
+			content: "TEST-KEY-DATA\n-----END RSA PRIVATE KEY-----\n",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid key - missing END marker",
+			prefix:  "ansible-key-",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid key - no PEM markers at all",
+			prefix:  "ansible-key-",
+			content: "This is not a valid SSH key",
+			wantErr: true,
+		},
+		{
+			name:    "Non-key file - should not validate",
+			prefix:  "ansible-vault-",
+			content: "vault_password_123",
+			wantErr: false, // vault files are not validated
+		},
+		{
+			name:    "Non-key prefix - contains 'key' but not validated",
+			prefix:  "my-keycloak-config-",
+			content: "not a real ssh key",
+			wantErr: false, // only ansible-key- and ssh-key- prefixes trigger validation
+		},
+		{
+			name:    "SSH key prefix - should validate",
+			prefix:  "ssh-key-",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----\n",
+			wantErr: false,
+		},
+		{
+			name:    "SSH key prefix - invalid content",
+			prefix:  "ssh-key-",
+			content: "not a valid key",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir, err := os.MkdirTemp("", "test-ssh-validation")
+			if err != nil {
+				t.Fatalf("Failed to create temporary directory: %v", err)
+			}
+			defer os.RemoveAll(tempDir)
+
+			file, err := writeTempFile(tempDir, tt.prefix, tt.content, 0600)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("writeTempFile() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if file != "" {
+				defer os.Remove(file)
+
+				// Verify file permissions
+				info, err := os.Stat(file)
+				if err != nil {
+					t.Errorf("Could not stat file: %v", err)
+					return
+				}
+				if info.Mode().Perm() != 0600 {
+					t.Errorf("Wrong permissions: got %o, want 0600", info.Mode().Perm())
+				}
+
+				// Verify content normalization
+				content, err := os.ReadFile(file)
+				if err != nil {
+					t.Errorf("Could not read file: %v", err)
+					return
+				}
+				if strings.Contains(string(content), "\r\n") {
+					t.Error("File still contains CRLF line endings")
+				}
+				if !strings.HasSuffix(string(content), "\n") {
+					t.Error("File does not end with newline")
+				}
+			}
+		})
+	}
+}
+
+// TestIsValidSSHKey tests the SSH key validation function.
+func TestIsValidSSHKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "Valid RSA private key",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----",
+			want:    true,
+		},
+		{
+			name:    "Valid OpenSSH private key",
+			content: "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----",
+			want:    true,
+		},
+		{
+			name:    "Valid generic private key",
+			content: "-----BEGIN PRIVATE KEY-----\nTEST-KEY-DATA\n-----END PRIVATE KEY-----",
+			want:    true,
+		},
+		{
+			name:    "Valid EC private key",
+			content: "-----BEGIN EC PRIVATE KEY-----\nTEST-KEY-DATA\n-----END EC PRIVATE KEY-----",
+			want:    true,
+		},
+		{
+			name:    "Valid DSA private key",
+			content: "-----BEGIN DSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END DSA PRIVATE KEY-----",
+			want:    true,
+		},
+		{
+			name:    "Invalid - missing BEGIN marker",
+			content: "TEST-KEY-DATA\n-----END RSA PRIVATE KEY-----",
+			want:    false,
+		},
+		{
+			name:    "Invalid - missing END marker",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA",
+			want:    false,
+		},
+		{
+			name:    "Invalid - no PEM markers",
+			content: "This is not a valid key",
+			want:    false,
+		},
+		{
+			name:    "Invalid - public key (not private)",
+			content: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
+			want:    false,
+		},
+		{
+			name:    "Invalid - empty string",
+			content: "",
+			want:    false,
+		},
+		{
+			name:    "Invalid - mismatched markers (BEGIN RSA, END EC)",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END EC PRIVATE KEY-----",
+			want:    false,
+		},
+		{
+			name:    "Invalid - mismatched markers (BEGIN OPENSSH, END RSA)",
+			content: "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----",
+			want:    false,
+		},
+		{
+			name:    "Invalid - certificate not private key",
+			content: "-----BEGIN CERTIFICATE-----\nTEST-CERT-DATA\n-----END CERTIFICATE-----",
+			want:    false,
+		},
+		{
+			name:    "Invalid - END marker before BEGIN marker",
+			content: "-----END RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----BEGIN RSA PRIVATE KEY-----",
+			want:    false,
+		},
+		{
+			name:    "Invalid - only BEGIN marker, no END",
+			content: "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidSSHKey(tt.content)
+			if got != tt.want {
+				t.Errorf("isValidSSHKey() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
