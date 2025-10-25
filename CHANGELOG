@@ -1,119 +1,138 @@
 # Changelog
 
-This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-and [human-readable changelog](https://keepachangelog.com/en/1.0.0/).
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- **Ansible Collection Playbook Support:**
-  - Added support for running playbooks from Ansible Collections using FQCN (Fully Qualified Collection Name) format.
-  - Collection playbooks can now be specified using the format `namespace.collection.playbook_name` without requiring local files.
-  - The `resolvePlaybooks` function now automatically detects and handles collection playbook references.
-  - Added `isCollectionPlaybook` helper function to distinguish between local file paths and collection FQCNs.
-  - Maintains full backward compatibility with local playbook files, glob patterns, and relative/absolute paths.
-
-## [1.0.0] - 13  2023
-
-### Breaking Changes
-
-- **Renaming and Refactoring of the Main Structure:**
-  - The previous structure **`AnsiblePlaybook`** has been removed and replaced with the new **`Playbook`** structure.
-  This change requires updates in any code that previously referenced `AnsiblePlaybook`.
-
-- **Changed Method Signature:**
-  - The **`Exec`** method now requires a `context.Context` parameter. Existing calls without this context will no longer work.
-
-- **Reorganization of the `Config` Struct:**
-  - The configuration structure has been reorganized. Many fields have been added, renamed, or grouped
-  into categories (General, SSH, Playbook, Vault, Facts, Galaxy, etc.). As a result, existing configurations
-  must be updated (e.g., options such as `User`, `AskPass`, `SyntaxCheck`, and various Galaxy-related parameters are now structured differently).
+## [1.1.0] - 2025-10-25
 
 ### Added
 
-- **Extended Configuration Options:**
-  - New fields added to the `Config` struct for SSH, Vault, Facts, and Galaxy integration (`PrivateKey`, `VaultPassword`, `GalaxyAPIServerURL`, `GalaxyCollectionsPath`, etc.).
-  - Additional parameters such as `CallbackWhitelist`, `PollInterval`, `GatherSubset`, and `StrategyPlugin`.
-
-- **New Helper Functions:**
-  - Added functions:
-    - `resolvePlaybooks` for resolving file patterns.
-    - `prepareTempFiles` and `cleanupTempFiles` for managing temporary files.
-    - Utility functions for command construction (`applyOption`, `addVerbose`, `appendExtraVars`).
-
-- **Improved Test Coverage:**
-  - Comprehensive unit tests for new functionalities including playbook resolution, temporary file handling, environment variable management, and command building.
+- Support for running playbooks from Ansible Collections using FQCN (Fully Qualified Collection Name) format
+- Collection playbooks can now be specified using the format `namespace.collection.playbook_name` without requiring local files
+- `isCollectionPlaybook()` helper function to distinguish between local file paths and collection FQCNs
+- Comprehensive test coverage for collection playbook functionality (3 new test functions with 7+ test cases)
+- Automatic detection and handling of collection playbook references in `resolvePlaybooks()` function
 
 ### Changed
 
-- **Command Building and Execution:**
-  - Implemented a new approach for building commands (`ansible-playbook` and `ansible-galaxy`) using context-based calls (`exec.CommandContext`)
-  and dynamically setting environment variables.
-  - Enhanced error handling utilizing the `github.com/pkg/errors` package.
+- Update GitHub Actions workflows with SHA-pinned versions for improved security
+- Update `actions/checkout` from v4 to v5
+- Update `oxsecurity/megalinter` from v8 to v9
+- Update `actions/upload-artifact` from v4 to v5
+- Update `actions/setup-go` from v5 to v6
+- Update `stefanzweifel/git-auto-commit-action` from v5 to v7
+- Update Go version from 1.23 to 1.25 in CI/CD pipeline
+- Enhance Renovate bot configuration with better grouping and security vulnerability alerts
 
-- **Documentation and Code Comments:**
-  - Updated and expanded documentation within the codebase and README to clearly reflect new features and API changes.
+### Compatibility
 
-- **Go Version Update:**
-  - Updated Go version in `go.mod` from **1.18** to **1.23**.
+- Maintains full backward compatibility with local playbook files, glob patterns, and relative/absolute paths
+
+[1.1.0]: https://github.com/arillso/go.ansible/compare/v1.0.0...v1.1.0
+
+## [1.0.0] - 2025-04-13
+
+### Changed
+
+- **BREAKING:** Rename `AnsiblePlaybook` structure to `Playbook` - requires code updates for all references
+- **BREAKING:** `Exec()` method now requires `context.Context` parameter
+- **BREAKING:** Reorganize `Config` struct with new field groupings (General, SSH, Playbook, Vault, Facts, Galaxy)
+- Implement new command building approach using `exec.CommandContext` with dynamic environment variables
+- Enhance error handling using `github.com/pkg/errors` package
+- Update and expand documentation in codebase and README
+- Update Go version in `go.mod` from 1.18 to 1.23
+
+### Added
+
+- Extended configuration options for SSH, Vault, Facts, and Galaxy integration
+- New `Config` fields: `PrivateKey`, `VaultPassword`, `GalaxyAPIServerURL`, `GalaxyCollectionsPath`
+- Additional parameters: `CallbackWhitelist`, `PollInterval`, `GatherSubset`, `StrategyPlugin`
+- Helper functions: `resolvePlaybooks`, `prepareTempFiles`, `cleanupTempFiles`
+- Utility functions for command construction: `applyOption`, `addVerbose`, `appendExtraVars`
+- Comprehensive unit tests for playbook resolution, temporary file handling, environment variables, and command building
 
 ### Removed
 
-- **Deprecated Files and Structures:**
-  - Removed **`.all-contributorsrc`** file.
-  - Deleted test playbook file **`tests/test.yml`**.
+- `.all-contributorsrc` file
+- Test playbook file `tests/test.yml`
+- Outdated variables, comments, and redundant code segments
 
-- **Redundant Code:**
-  - Cleaned up outdated variables, comments, and redundant code segments.
+[1.0.0]: https://github.com/arillso/go.ansible/compare/v0.1.0...v1.0.0
 
-
-## [0.1.0] - 11 Nov 2023
+## [0.1.0] - 2023-11-11
 
 ### Added
 
-- **GalaxyAPIKey**: Key for Galaxy API authentication.
-- **GalaxyAPIServerURL**: URL of the Galaxy API server.
-- **GalaxyCollectionsPath**: Path to Galaxy collections.
-- **GalaxyDisableGPGVerify**: Disables GPG verification for Galaxy.
-- **GalaxyForceWithDeps**: Forces Galaxy installation with dependencies.
-- **GalaxyIgnoreCerts**: Ignores certificate checks for Galaxy.
-- **GalaxyIgnoreSignatureStatusCodes**: List of status codes to ignore in Galaxy signature checks.
-- **GalaxyKeyring**: Path to the Galaxy keyring.
-- **GalaxyOffline**: Enables offline mode for Galaxy.
-- **GalaxyPre**: Enables installation of pre-release versions in Galaxy.
-- **GalaxyRequiredValidSignatureCount**: Number of required valid signatures for Galaxy.
-- **GalaxyRequirementsFile**: Path to the file with Galaxy requirements.
-- **GalaxySignature**: Specific signature for Galaxy.
-- **GalaxyTimeout**: Timeout for Galaxy operations.
-- **GalaxyUpgrade**: Enables the upgrade of Galaxy collections.
-- **GalaxyNoDeps**: Disables dependency resolution in Galaxy.
+- Galaxy API authentication support with `GalaxyAPIKey`
+- `GalaxyAPIServerURL` for configuring Galaxy API server
+- `GalaxyCollectionsPath` for specifying collections path
+- `GalaxyDisableGPGVerify` to disable GPG verification
+- `GalaxyForceWithDeps` to force installation with dependencies
+- `GalaxyIgnoreCerts` to ignore certificate checks
+- `GalaxyIgnoreSignatureStatusCodes` for signature status code filtering
+- `GalaxyKeyring` for keyring path configuration
+- `GalaxyOffline` for offline mode
+- `GalaxyPre` for pre-release version installation
+- `GalaxyRequiredValidSignatureCount` for signature validation
+- `GalaxyRequirementsFile` for requirements file path
+- `GalaxySignature` for signature specification
+- `GalaxyTimeout` for operation timeout configuration
+- `GalaxyUpgrade` to enable collection upgrades
+- `GalaxyNoDeps` to disable dependency resolution
 
-## [0.0.4] - 09 Nov 2023
+[0.1.0]: https://github.com/arillso/go.ansible/compare/v0.0.4...v0.1.0
+
+## [0.0.4] - 2023-11-09
 
 ### Fixed
 
-- Correct 'Config' field case sensitivity in ansiblePlaybook.
+- Correct 'Config' field case sensitivity in ansiblePlaybook ([#7])
 
-## [0.0.3] - 09 Nov 2023
+[#7]: https://github.com/arillso/go.ansible/pull/7
+[0.0.4]: https://github.com/arillso/go.ansible/compare/v0.0.3...v0.0.4
 
-### Added
-
-- Add 'GalaxyForce' boolean variable.
-
-## [0.0.2] - 28 Jul 2022
+## [0.0.3] - 2023-11-09
 
 ### Added
 
-- Environment variable `ANSIBLE_GALAXY_DISPLAY_PROGRESS` with value `False`.
+- `GalaxyForce` boolean variable ([#6])
+
+[#6]: https://github.com/arillso/go.ansible/pull/6
+[0.0.3]: https://github.com/arillso/go.ansible/compare/v0.0.2...v0.0.3
+
+## [0.0.2] - 2022-07-28
+
+### Added
+
+- Environment variable `ANSIBLE_GALAXY_DISPLAY_PROGRESS` with value `False` ([#2])
 
 ### Changed
 
-- Bump github.com/urfave/cli/v2 from 2.2.0 to 2.3.0.
-- Bump github.com/joho/godotenv from 1.3.0 to 1.4.0.
+- Update github.com/urfave/cli/v2 from 2.2.0 to 2.3.0 ([#1])
+- Update github.com/joho/godotenv from 1.3.0 to 1.4.0 ([#4])
 
-## [0.0.1] - 05 Apr 2021
+### Contributors
+
+This release includes the first contributions from:
+- @dependabot-preview in [#1]
+- @sbaerlocher in [#2]
+- @dependabot in [#4]
+
+[#1]: https://github.com/arillso/go.ansible/pull/1
+[#2]: https://github.com/arillso/go.ansible/pull/2
+[#4]: https://github.com/arillso/go.ansible/pull/4
+[0.0.2]: https://github.com/arillso/go.ansible/compare/v0.0.1...v0.0.2
+
+## [0.0.1] - 2021-04-05
 
 ### Added
 
-- Initial Commit
+- Initial release with core Ansible playbook execution functionality
+- Basic configuration structure
+- Command building and execution pipeline
+
+[0.0.1]: https://github.com/arillso/go.ansible/releases/tag/v0.0.1
