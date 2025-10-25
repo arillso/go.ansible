@@ -487,9 +487,59 @@ func (p *Playbook) trace(cmd *exec.Cmd) {
 	fmt.Printf("$ %s\n", strings.Join(cmd.Args, " "))
 }
 
+// isValidSSHKey validates that the content is in proper PEM format for SSH keys.
+// It checks for matching BEGIN and END markers in the correct order to ensure valid PEM structure.
+func isValidSSHKey(content string) bool {
+	// List of valid private key types
+	keyTypes := []string{
+		"PRIVATE KEY",
+		"RSA PRIVATE KEY",
+		"OPENSSH PRIVATE KEY",
+		"EC PRIVATE KEY",
+		"DSA PRIVATE KEY",
+	}
+
+	// Check for matching BEGIN and END markers for the same key type, in the correct order
+	for _, keyType := range keyTypes {
+		beginMarker := "-----BEGIN " + keyType + "-----"
+		endMarker := "-----END " + keyType + "-----"
+
+		beginIdx := strings.Index(content, beginMarker)
+		if beginIdx == -1 {
+			continue
+		}
+
+		// Search for END marker after BEGIN marker
+		endIdx := strings.Index(content[beginIdx+len(beginMarker):], endMarker)
+		if endIdx != -1 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // writeTempFile creates a temporary file in the specified directory with the given prefix,
 // writes the content to the file, closes it and sets the specified permissions.
+// This function normalizes line endings (CRLF → LF) and ensures a trailing newline for SSH keys.
+// For SSH keys, it also validates the PEM format to catch potential issues early.
 func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, error) {
+	// Normalize line endings (CRLF → LF) to ensure compatibility across platforms
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+
+	// Ensure trailing newline for SSH keys and other sensitive files
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+
+	// Validate SSH key format if this is a key file
+	// Only validate files with explicit key-related prefixes to avoid false positives
+	if strings.HasPrefix(prefix, "ansible-key-") || strings.HasPrefix(prefix, "ssh-key-") {
+		if !isValidSSHKey(content) {
+			return "", errors.New("invalid SSH key format: must be in PEM format with proper BEGIN/END markers")
+		}
+	}
+
 	tmpFile, err := os.CreateTemp(tempDir, prefix)
 	if err != nil {
 		return "", errors.Wrap(err, "could not create temp file")
