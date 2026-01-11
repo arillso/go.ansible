@@ -63,7 +63,7 @@ func TestResolvePlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	playbookPath := filepath.Join(tempDir, "site.yml")
 	// Write file using os.WriteFile.
@@ -118,7 +118,7 @@ func TestResolveMixedPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create a local playbook file.
 	localPlaybook := filepath.Join(tempDir, "local.yml")
@@ -164,7 +164,7 @@ func TestPrepareTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	pb := NewPlaybook()
 	pb.Config.TempDir = tempDir

@@ -229,7 +229,7 @@ func (p *Playbook) prepareTempFiles() error {
 // cleanupTempFiles removes all temporary files created during execution.
 func (p *Playbook) cleanupTempFiles() {
 	for _, f := range p.tempFiles {
-		os.Remove(f)
+		_ = os.Remove(f) // Best effort cleanup, ignore errors
 	}
 }
 
@@ -547,18 +547,18 @@ func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, e
 	filename := tmpFile.Name()
 
 	if _, err := tmpFile.Write([]byte(content)); err != nil {
-		tmpFile.Close()
-		os.Remove(filename)
+		_ = tmpFile.Close()
+		_ = os.Remove(filename)
 		return "", errors.Wrap(err, "could not write temp file")
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(filename)
+		_ = os.Remove(filename)
 		return "", errors.Wrap(err, "could not close temp file")
 	}
 
 	if err := os.Chmod(filename, perm); err != nil {
-		os.Remove(filename)
+		_ = os.Remove(filename)
 		return "", errors.Wrap(err, "could not set permissions on temp file")
 	}
 
