@@ -438,7 +438,7 @@ func TestWriteTempFileLineEndings(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temporary directory: %v", err)
 			}
-			defer os.RemoveAll(tempDir)
+			defer func() { _ = os.RemoveAll(tempDir) }()
 
 			file, err := writeTempFile(tempDir, "test-", tt.input, 0600)
 			if err != nil {
@@ -551,7 +551,7 @@ func TestWriteTempFileSSHKeyValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temporary directory: %v", err)
 			}
-			defer os.RemoveAll(tempDir)
+			defer func() { _ = os.RemoveAll(tempDir) }()
 
 			file, err := writeTempFile(tempDir, tt.prefix, tt.content, 0600)
 			if (err != nil) != tt.wantErr {
