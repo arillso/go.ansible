@@ -232,7 +232,7 @@ func TestBuildCustomEnvVars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	cfg := Config{}
 	// Create a dummy configuration file.
@@ -334,7 +334,7 @@ func TestBuildCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create a dummy playbook file.
 	playbookFile := filepath.Join(tempDir, "test.yml")
@@ -368,7 +368,7 @@ func TestWriteTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	content := "temporary content"
 	file, err := writeTempFile(tempDir, "prefix-", content, 0600)
@@ -560,7 +560,7 @@ func TestWriteTempFileSSHKeyValidation(t *testing.T) {
 			}
 
 			if file != "" {
-				defer os.Remove(file)
+				defer func() { _ = os.Remove(file) }()
 
 				// Verify file permissions
 				info, err := os.Stat(file)
