@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Align repository structure with Arillso standards
+- Update GitHub Actions dependencies for CI/CD workflows
+
+### Fixed
+
+- Resolve golangci-lint errcheck warnings for unchecked return values in cleanup operations
+- Add explicit error handling for `os.Remove()` and `os.RemoveAll()` in test files
+
 ## [1.2.0] - 2025-10-25
 
 ### Added
