@@ -44,6 +44,7 @@ build: ## Build Go module
 ## Cleanup
 clean: ## Remove build artifacts
 	go clean
+	rm -f coverage.out coverage.html
 	rm -rf build/ dist/ megalinter-reports/
 
 ## Help
