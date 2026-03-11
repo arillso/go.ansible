@@ -14,7 +14,7 @@ lint-go: ## Run Go linter (golangci-lint)
 
 lint-yaml: ## Run YAML linter
 	@if command -v yamllint >/dev/null 2>&1; then \
-		yamllint -c .yamllint.yml .; \
+		yamllint .; \
 	else \
 		echo "yamllint not found, skipping"; \
 	fi

@@ -12,7 +12,6 @@ go.work
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
 build/
 dist/
@@ -24,7 +23,12 @@ dist/
 
 # IDEs
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
 *.swp
 *.swo
 *~
