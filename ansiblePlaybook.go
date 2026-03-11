@@ -323,7 +323,7 @@ func buildCustomEnvVars(cfg *Config) []string {
 // argOption represents a single command-line flag option.
 type argOption struct {
 	flag  string
-	value interface{}
+	value any
 }
 
 // applyOption appends the flag and its value (if set) to the args slice.
@@ -426,10 +426,17 @@ func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
 // ansibleCommand creates the command to run an Ansible playbook for the specified inventory.
 func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.Cmd {
 	args := []string{"--inventory", inventory}
-	if p.Config.SyntaxCheck || p.Config.ListHosts {
-		flag := "--syntax-check"
-		if p.Config.ListHosts {
+	if p.Config.SyntaxCheck || p.Config.ListHosts || p.Config.ListTags || p.Config.ListTasks {
+		var flag string
+		switch {
+		case p.Config.ListHosts:
 			flag = "--list-hosts"
+		case p.Config.ListTags:
+			flag = "--list-tags"
+		case p.Config.ListTasks:
+			flag = "--list-tasks"
+		default:
+			flag = "--syntax-check"
 		}
 		args = append(args, flag)
 		args = append(args, p.Config.Playbooks...)

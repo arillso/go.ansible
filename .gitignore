@@ -53,5 +53,9 @@ htmlcov/
 .venv/
 venv/
 
+# Coverage
+coverage.out
+coverage.html
+
 # Reports
 megalinter-reports

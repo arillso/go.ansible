@@ -678,6 +678,46 @@ func TestIsValidSSHKey(t *testing.T) {
 	}
 }
 
+// TestAnsibleCommandListTags verifies that --list-tags flag is correctly added.
+func TestAnsibleCommandListTags(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.ListTags = true
+	inv := getInventoryHost() + ","
+	cmd := pb.ansibleCommand(context.Background(), inv)
+
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == "--list-tags" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected --list-tags in command arguments")
+	}
+}
+
+// TestAnsibleCommandListTasks verifies that --list-tasks flag is correctly added.
+func TestAnsibleCommandListTasks(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.ListTasks = true
+	inv := getInventoryHost() + ","
+	cmd := pb.ansibleCommand(context.Background(), inv)
+
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == "--list-tasks" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected --list-tasks in command arguments")
+	}
+}
+
 // TestExecNoPlaybooks verifies that Exec returns an error when no playbooks are specified.
 func TestExecNoPlaybooks(t *testing.T) {
 	pb := NewPlaybook()
