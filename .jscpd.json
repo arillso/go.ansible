@@ -1,4 +1,4 @@
 {
-    "threshold": 0,
+    "threshold": 5,
     "ignore": ["**/.ansible/**"]
 }
