@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/pkg/errors"
 )
@@ -98,12 +97,10 @@ type Config struct {
 }
 
 // Playbook represents an execution of an Ansible playbook run.
-// A Playbook instance must not be used concurrently; concurrent calls to Exec
-// on the same instance are not safe. Create separate instances for concurrent use.
+// Playbook is not safe for concurrent use. Create separate instances for concurrent use.
 type Playbook struct {
 	Config    Config
 	Debug     bool // Enables additional logging output
-	mu        sync.Mutex
 	tempFiles []string
 }
 
@@ -121,8 +118,6 @@ func NewPlaybook() *Playbook {
 // It resolves playbook paths, prepares temporary files, builds and executes commands,
 // and cleans up temporary files afterward.
 func (p *Playbook) Exec(ctx context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	defer p.cleanupTempFiles()
 
 	if err := p.resolvePlaybooks(); err != nil {
@@ -398,7 +393,7 @@ func (p *Playbook) buildGalaxyCommand(ctx context.Context, base []string, opts [
 	return exec.CommandContext(ctx, "ansible-galaxy", args...)
 }
 
-// commonGalaxyOptions returns options shared by both role and collection install commands.
+// commonGalaxyOptions returns a fresh slice of options shared by both role and collection install commands.
 func (p *Playbook) commonGalaxyOptions() []argOption {
 	return []argOption{
 		{flag: "--server", value: p.Config.GalaxyAPIServerURL},

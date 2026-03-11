@@ -11,6 +11,7 @@ package ansible
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -768,11 +769,16 @@ func TestExecCleanupAfterError(t *testing.T) {
 	pb.Config.Inventories = []string{getInventoryHost() + ","}
 	pb.Config.VaultPassword = "test-vault-pass"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Exec will fail (either timeout or missing ansible binary) but should still clean up
 	_ = pb.Exec(ctx)
+
+	// Verify that at least one temporary file was tracked (vault password)
+	if len(pb.tempFiles) == 0 {
+		t.Fatal("expected at least one temporary file to be tracked for cleanup verification")
+	}
 
 	// Verify that temporary files were cleaned up
 	for _, f := range pb.tempFiles {
@@ -805,7 +811,10 @@ func TestExecContextCancellation(t *testing.T) {
 
 	err = pb.Exec(ctx)
 	if err == nil {
-		t.Log("Exec completed without error despite cancelled context (ansible may not be installed)")
+		t.Skip("skipping context-cancellation check: ansible binary not available")
+	}
+	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context") {
+		t.Errorf("expected context cancellation error, got: %v", err)
 	}
 }
 
