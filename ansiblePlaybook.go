@@ -74,6 +74,7 @@ type Config struct {
 	GalaxyOffline, GalaxyPre          bool
 	GalaxyRequiredValidSignatureCount int
 	GalaxyRequirementsFile            string
+	GalaxyRolesPath                   string
 	GalaxySignature                   string
 	GalaxyTimeout                     int
 	GalaxyUpgrade                     bool
@@ -405,8 +406,13 @@ func (p *Playbook) commonGalaxyOptions() []argOption {
 
 // galaxyRoleCommand creates the command to install Ansible Galaxy roles.
 func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
+	roleFile := p.Config.GalaxyFile
+	if p.Config.GalaxyRequirementsFile != "" {
+		roleFile = p.Config.GalaxyRequirementsFile
+	}
 	opts := append(p.commonGalaxyOptions(),
-		argOption{flag: "--role-file", value: p.Config.GalaxyFile},
+		argOption{flag: "--role-file", value: roleFile},
+		argOption{flag: "--roles-path", value: p.Config.GalaxyRolesPath},
 		argOption{flag: "--no-deps", value: p.Config.GalaxyNoDeps},
 	)
 	return p.buildGalaxyCommand(ctx, []string{"role", "install"}, opts)
@@ -414,11 +420,21 @@ func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
 
 // galaxyCollectionCommand creates the command to install Ansible Galaxy collections.
 func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
+	reqFile := p.Config.GalaxyFile
+	if p.Config.GalaxyRequirementsFile != "" {
+		reqFile = p.Config.GalaxyRequirementsFile
+	}
 	opts := append(p.commonGalaxyOptions(),
-		argOption{flag: "--requirements-file", value: p.Config.GalaxyFile},
+		argOption{flag: "--requirements-file", value: reqFile},
 		argOption{flag: "--collections-path", value: p.Config.GalaxyCollectionsPath},
 		argOption{flag: "--pre", value: p.Config.GalaxyPre},
 		argOption{flag: "--upgrade", value: p.Config.GalaxyUpgrade},
+		argOption{flag: "--keyring", value: p.Config.GalaxyKeyring},
+		argOption{flag: "--disable-gpg-verify", value: p.Config.GalaxyDisableGPGVerify},
+		argOption{flag: "--required-valid-signature-count", value: p.Config.GalaxyRequiredValidSignatureCount},
+		argOption{flag: "--ignore-signature-status-code", value: p.Config.GalaxyIgnoreSignatureStatusCodes},
+		argOption{flag: "--signature", value: p.Config.GalaxySignature},
+		argOption{flag: "--offline", value: p.Config.GalaxyOffline},
 	)
 	return p.buildGalaxyCommand(ctx, []string{"collection", "install"}, opts)
 }
@@ -479,6 +495,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 		{flag: "--tags", value: p.Config.Tags},
 		{flag: "--skip-tags", value: p.Config.SkipTags},
 		{flag: "--start-at-task", value: p.Config.StartAtTask},
+		{flag: "--module-path", value: p.Config.ModulePath},
 	}
 	for _, opt := range options {
 		args = applyOption(args, opt)

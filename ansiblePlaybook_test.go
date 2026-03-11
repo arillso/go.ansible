@@ -265,14 +265,76 @@ func TestBuildCustomEnvVars(t *testing.T) {
 
 // TestAddVerbose verifies that the verbose flag is correctly generated.
 func TestAddVerbose(t *testing.T) {
-	args := []string{"test"}
-	args = addVerbose(args, 3)
-	// The last element should be "-vvv".
-	if len(args) == 0 {
-		t.Errorf("Expected non-empty argument list")
+	tests := []struct {
+		name     string
+		level    int
+		expected string
+	}{
+		{"level 0 adds nothing", 0, ""},
+		{"negative level adds nothing", -1, ""},
+		{"level 1", 1, "-v"},
+		{"level 2", 2, "-vv"},
+		{"level 3", 3, "-vvv"},
+		{"level 4 (max)", 4, "-vvvv"},
+		{"level 5 clamped to max", 5, "-vvvv"},
+		{"level 100 clamped to max", 100, "-vvvv"},
 	}
-	if args[len(args)-1] != "-vvv" {
-		t.Errorf("Expected \"-vvv\", got: %s", args[len(args)-1])
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := addVerbose([]string{"test"}, tt.level)
+			if tt.expected == "" {
+				if len(args) != 1 {
+					t.Errorf("Expected no verbose flag added, got %v", args)
+				}
+			} else {
+				if len(args) != 2 {
+					t.Fatalf("Expected 2 args, got %d: %v", len(args), args)
+				}
+				if args[1] != tt.expected {
+					t.Errorf("Expected %q, got %q", tt.expected, args[1])
+				}
+			}
+		})
+	}
+}
+
+// TestApplyOption verifies that applyOption correctly handles all supported types.
+func TestApplyOption(t *testing.T) {
+	tests := []struct {
+		name     string
+		opt      argOption
+		expected []string
+	}{
+		{"string value", argOption{"--user", "admin"}, []string{"--user", "admin"}},
+		{"empty string skipped", argOption{"--user", ""}, nil},
+		{"int value", argOption{"--forks", 10}, []string{"--forks", "10"}},
+		{"zero int skipped", argOption{"--forks", 0}, nil},
+		{"bool true", argOption{"--check", true}, []string{"--check"}},
+		{"bool false skipped", argOption{"--check", false}, nil},
+		{"string slice", argOption{"--module-path", []string{"/a", "/b"}}, []string{"--module-path", "/a", "--module-path", "/b"}},
+		{"empty string slice skipped", argOption{"--module-path", []string{}}, nil},
+		{"string slice with empty item", argOption{"--module-path", []string{"/a", "", "/b"}}, []string{"--module-path", "/a", "--module-path", "/b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := applyOption(nil, tt.opt)
+			if tt.expected == nil {
+				if len(result) != 0 {
+					t.Errorf("Expected no args, got %v", result)
+				}
+			} else {
+				if len(result) != len(tt.expected) {
+					t.Fatalf("Expected %d args, got %d: %v", len(tt.expected), len(result), result)
+				}
+				for i, v := range tt.expected {
+					if result[i] != v {
+						t.Errorf("Arg[%d]: expected %q, got %q", i, v, result[i])
+					}
+				}
+			}
+		})
 	}
 }
 
