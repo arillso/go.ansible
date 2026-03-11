@@ -3,19 +3,9 @@ name: Continuous Integration
 
 "on":
     push:
-        branches:
-            - main
-            - "feature/**"
-        paths-ignore:
-            - "**.md"
-            - ".github/CODEOWNERS"
+        branches: [main]
     pull_request:
-        branches:
-            - main
-        paths-ignore:
-            - "**.md"
-            - ".github/CODEOWNERS"
-    workflow_dispatch:
+        branches: [main]
 
 concurrency:
     group: ${{ github.ref }}-${{ github.workflow }}
@@ -23,48 +13,12 @@ concurrency:
 
 permissions:
     contents: read
+    security-events: write
+    actions: read
 
 jobs:
-    golangci-lint:
-        name: Go Lint
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout Code
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+    ci:
+        uses: arillso/.github/.github/workflows/ci-go-action.yml@2026-03-09
 
-            - name: Setup Go
-              uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6
-              with:
-                  go-version-file: go.mod
-                  cache: true
-
-            - name: Run golangci-lint
-              uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
-              with:
-                  version: latest
-
-    actionlint:
-        name: Action Lint
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout Code
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-            - name: Run actionlint
-              uses: reviewdog/action-actionlint@e58ee9d111489c31395fbe4857b0be6e7635dbda # v1
-              with:
-                  reporter: github-pr-review
-                  fail_level: error
-
-    yamllint:
-        name: YAML Lint
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout Code
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-            - name: Run yamllint
-              uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c # v3
-              with:
-                  config_file: .yamllint.yml
-                  strict: false
+    security-secrets:
+        uses: arillso/.github/.github/workflows/security-secrets.yml@2026-03-09
