@@ -1,11 +1,5 @@
-// ansiblePlaybook_test.go
-// Description: Comprehensive tests for the ansible package.
-// Author: Your Name
-// These tests cover functions such as:
-// - resolvePlaybooks: Resolving playbook file paths from patterns.
-// - prepareTempFiles & cleanupTempFiles: Creating and cleaning up temporary files.
-// - buildCustomEnvVars: Assembling additional environment variables.
-// - Other helper functions like addVerbose, appendExtraVars, and writeTempFile.
+// Tests for the ansible package covering playbook resolution, temporary file
+// management, environment variable assembly, and helper functions.
 
 package ansible
 
@@ -271,14 +265,76 @@ func TestBuildCustomEnvVars(t *testing.T) {
 
 // TestAddVerbose verifies that the verbose flag is correctly generated.
 func TestAddVerbose(t *testing.T) {
-	args := []string{"test"}
-	args = addVerbose(args, 3)
-	// The last element should be "-vvv".
-	if len(args) == 0 {
-		t.Errorf("Expected non-empty argument list")
+	tests := []struct {
+		name     string
+		level    int
+		expected string
+	}{
+		{"level 0 adds nothing", 0, ""},
+		{"negative level adds nothing", -1, ""},
+		{"level 1", 1, "-v"},
+		{"level 2", 2, "-vv"},
+		{"level 3", 3, "-vvv"},
+		{"level 4 (max)", 4, "-vvvv"},
+		{"level 5 clamped to max", 5, "-vvvv"},
+		{"level 100 clamped to max", 100, "-vvvv"},
 	}
-	if args[len(args)-1] != "-vvv" {
-		t.Errorf("Expected \"-vvv\", got: %s", args[len(args)-1])
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := addVerbose([]string{"test"}, tt.level)
+			if tt.expected == "" {
+				if len(args) != 1 {
+					t.Errorf("Expected no verbose flag added, got %v", args)
+				}
+			} else {
+				if len(args) != 2 {
+					t.Fatalf("Expected 2 args, got %d: %v", len(args), args)
+				}
+				if args[1] != tt.expected {
+					t.Errorf("Expected %q, got %q", tt.expected, args[1])
+				}
+			}
+		})
+	}
+}
+
+// TestApplyOption verifies that applyOption correctly handles all supported types.
+func TestApplyOption(t *testing.T) {
+	tests := []struct {
+		name     string
+		opt      argOption
+		expected []string
+	}{
+		{"string value", argOption{"--user", "admin"}, []string{"--user", "admin"}},
+		{"empty string skipped", argOption{"--user", ""}, nil},
+		{"int value", argOption{"--forks", 10}, []string{"--forks", "10"}},
+		{"zero int skipped", argOption{"--forks", 0}, nil},
+		{"bool true", argOption{"--check", true}, []string{"--check"}},
+		{"bool false skipped", argOption{"--check", false}, nil},
+		{"string slice", argOption{"--module-path", []string{"/a", "/b"}}, []string{"--module-path", "/a", "--module-path", "/b"}},
+		{"empty string slice skipped", argOption{"--module-path", []string{}}, nil},
+		{"string slice with empty item", argOption{"--module-path", []string{"/a", "", "/b"}}, []string{"--module-path", "/a", "--module-path", "/b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := applyOption(nil, tt.opt)
+			if tt.expected == nil {
+				if len(result) != 0 {
+					t.Errorf("Expected no args, got %v", result)
+				}
+			} else {
+				if len(result) != len(tt.expected) {
+					t.Fatalf("Expected %d args, got %d: %v", len(tt.expected), len(result), result)
+				}
+				for i, v := range tt.expected {
+					if result[i] != v {
+						t.Errorf("Arg[%d]: expected %q, got %q", i, v, result[i])
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -681,6 +737,46 @@ func TestIsValidSSHKey(t *testing.T) {
 				t.Errorf("isValidSSHKey() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestAnsibleCommandListTags verifies that --list-tags flag is correctly added.
+func TestAnsibleCommandListTags(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.ListTags = true
+	inv := getInventoryHost() + ","
+	cmd := pb.ansibleCommand(context.Background(), inv)
+
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == "--list-tags" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected --list-tags in command arguments")
+	}
+}
+
+// TestAnsibleCommandListTasks verifies that --list-tasks flag is correctly added.
+func TestAnsibleCommandListTasks(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.ListTasks = true
+	inv := getInventoryHost() + ","
+	cmd := pb.ansibleCommand(context.Background(), inv)
+
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == "--list-tasks" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected --list-tasks in command arguments")
 	}
 }
 

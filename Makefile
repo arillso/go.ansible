@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help lint lint-go lint-yaml format test build clean
+.PHONY: help lint lint-go lint-yaml format test coverage build clean
 
 ## Linting
 lint: lint-go lint-yaml ## Run all linters
@@ -32,6 +32,11 @@ format: ## Format Go code
 test: ## Run Go tests
 	go test -v ./...
 
+coverage: ## Generate test coverage report
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
+
 ## Building
 build: ## Build Go module
 	go build -v ./...
@@ -39,6 +44,7 @@ build: ## Build Go module
 ## Cleanup
 clean: ## Remove build artifacts
 	go clean
+	rm -f coverage.out coverage.html
 	rm -rf build/ dist/ megalinter-reports/
 
 ## Help

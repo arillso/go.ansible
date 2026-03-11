@@ -4,14 +4,13 @@ package ansible
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -75,6 +74,7 @@ type Config struct {
 	GalaxyOffline, GalaxyPre          bool
 	GalaxyRequiredValidSignatureCount int
 	GalaxyRequirementsFile            string
+	GalaxyRolesPath                   string
 	GalaxySignature                   string
 	GalaxyTimeout                     int
 	GalaxyUpgrade                     bool
@@ -121,16 +121,16 @@ func (p *Playbook) Exec(ctx context.Context) error {
 	defer p.cleanupTempFiles()
 
 	if err := p.resolvePlaybooks(); err != nil {
-		return errors.Wrap(err, "failed to resolve playbooks")
+		return fmt.Errorf("failed to resolve playbooks: %w", err)
 	}
 
 	if err := p.prepareTempFiles(); err != nil {
-		return errors.Wrap(err, "failed to prepare temporary files")
+		return fmt.Errorf("failed to prepare temporary files: %w", err)
 	}
 
 	cmds, err := p.buildCommands(ctx)
 	if err != nil {
-		return errors.Wrap(err, "failed to build commands")
+		return fmt.Errorf("failed to build commands: %w", err)
 	}
 
 	return p.runCommands(ctx, cmds)
@@ -194,14 +194,14 @@ func (p *Playbook) resolvePlaybooks() error {
 				if _, err := os.Stat(file); err == nil {
 					playbooks = append(playbooks, file)
 				} else {
-					return errors.Wrapf(err, "playbook not found: %s", file)
+					return fmt.Errorf("playbook not found: %s: %w", file, err)
 				}
 			}
 		} else if _, err := os.Stat(pattern); err == nil {
 			// Try as direct file path
 			playbooks = append(playbooks, pattern)
 		} else {
-			return errors.Errorf("playbook not found: %s", pattern)
+			return fmt.Errorf("playbook not found: %s", pattern)
 		}
 	}
 
@@ -219,7 +219,7 @@ func (p *Playbook) prepareTempFiles() error {
 	if p.Config.PrivateKey != "" {
 		file, err := writeTempFile(p.Config.TempDir, "ansible-key-", p.Config.PrivateKey, 0600)
 		if err != nil {
-			return errors.Wrap(err, "could not create private key file")
+			return fmt.Errorf("could not create private key file: %w", err)
 		}
 		p.Config.PrivateKeyFile = file
 		p.tempFiles = append(p.tempFiles, file)
@@ -227,7 +227,7 @@ func (p *Playbook) prepareTempFiles() error {
 	if p.Config.VaultPassword != "" {
 		file, err := writeTempFile(p.Config.TempDir, "ansible-vault-", p.Config.VaultPassword, 0600)
 		if err != nil {
-			return errors.Wrap(err, "could not create vault password file")
+			return fmt.Errorf("could not create vault password file: %w", err)
 		}
 		p.Config.VaultPasswordFile = file
 		p.tempFiles = append(p.tempFiles, file)
@@ -253,7 +253,7 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 	// Galaxy commands (if GalaxyFile is set)
 	if p.Config.GalaxyFile != "" {
 		if _, err := os.Stat(p.Config.GalaxyFile); os.IsNotExist(err) {
-			return nil, errors.Errorf("galaxy file not found: %s", p.Config.GalaxyFile)
+			return nil, fmt.Errorf("galaxy file not found: %s", p.Config.GalaxyFile)
 		}
 		cmds = append(cmds, p.galaxyRoleCommand(ctx), p.galaxyCollectionCommand(ctx))
 	}
@@ -286,7 +286,7 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 		}
 		if err := cmd.Run(); err != nil {
 			cmdName := filepath.Base(cmd.Path)
-			return errors.Wrapf(err, "error executing %s (command %d/%d)", cmdName, i+1, len(cmds))
+			return fmt.Errorf("error executing %s (command %d/%d): %w", cmdName, i+1, len(cmds), err)
 		}
 	}
 	return nil
@@ -299,7 +299,7 @@ func validateInventory(inv string) error {
 		return nil
 	}
 	if _, err := os.Stat(inv); os.IsNotExist(err) {
-		return errors.Errorf("inventory not found: %s", inv)
+		return fmt.Errorf("inventory not found: %s", inv)
 	}
 	return nil
 }
@@ -324,7 +324,7 @@ func buildCustomEnvVars(cfg *Config) []string {
 // argOption represents a single command-line flag option.
 type argOption struct {
 	flag  string
-	value interface{}
+	value any
 }
 
 // applyOption appends the flag and its value (if set) to the args slice.
@@ -359,11 +359,10 @@ func addVerbose(args []string, level int) []string {
 	if level <= 0 {
 		return args
 	}
-	verboseFlag := "-"
-	for i := 0; i < level && i < maxVerboseLevel; i++ {
-		verboseFlag += "v"
+	if level > maxVerboseLevel {
+		level = maxVerboseLevel
 	}
-	return append(args, verboseFlag)
+	return append(args, "-"+strings.Repeat("v", level))
 }
 
 // appendExtraVars appends all extra-vars to the args slice.
@@ -407,8 +406,13 @@ func (p *Playbook) commonGalaxyOptions() []argOption {
 
 // galaxyRoleCommand creates the command to install Ansible Galaxy roles.
 func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
+	roleFile := p.Config.GalaxyFile
+	if p.Config.GalaxyRequirementsFile != "" {
+		roleFile = p.Config.GalaxyRequirementsFile
+	}
 	opts := append(p.commonGalaxyOptions(),
-		argOption{flag: "--role-file", value: p.Config.GalaxyFile},
+		argOption{flag: "--role-file", value: roleFile},
+		argOption{flag: "--roles-path", value: p.Config.GalaxyRolesPath},
 		argOption{flag: "--no-deps", value: p.Config.GalaxyNoDeps},
 	)
 	return p.buildGalaxyCommand(ctx, []string{"role", "install"}, opts)
@@ -416,11 +420,21 @@ func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
 
 // galaxyCollectionCommand creates the command to install Ansible Galaxy collections.
 func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
+	reqFile := p.Config.GalaxyFile
+	if p.Config.GalaxyRequirementsFile != "" {
+		reqFile = p.Config.GalaxyRequirementsFile
+	}
 	opts := append(p.commonGalaxyOptions(),
-		argOption{flag: "--requirements-file", value: p.Config.GalaxyFile},
+		argOption{flag: "--requirements-file", value: reqFile},
 		argOption{flag: "--collections-path", value: p.Config.GalaxyCollectionsPath},
 		argOption{flag: "--pre", value: p.Config.GalaxyPre},
 		argOption{flag: "--upgrade", value: p.Config.GalaxyUpgrade},
+		argOption{flag: "--keyring", value: p.Config.GalaxyKeyring},
+		argOption{flag: "--disable-gpg-verify", value: p.Config.GalaxyDisableGPGVerify},
+		argOption{flag: "--required-valid-signature-count", value: p.Config.GalaxyRequiredValidSignatureCount},
+		argOption{flag: "--ignore-signature-status-code", value: p.Config.GalaxyIgnoreSignatureStatusCodes},
+		argOption{flag: "--signature", value: p.Config.GalaxySignature},
+		argOption{flag: "--offline", value: p.Config.GalaxyOffline},
 	)
 	return p.buildGalaxyCommand(ctx, []string{"collection", "install"}, opts)
 }
@@ -428,10 +442,17 @@ func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
 // ansibleCommand creates the command to run an Ansible playbook for the specified inventory.
 func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.Cmd {
 	args := []string{"--inventory", inventory}
-	if p.Config.SyntaxCheck || p.Config.ListHosts {
-		flag := "--syntax-check"
-		if p.Config.ListHosts {
+	if p.Config.SyntaxCheck || p.Config.ListHosts || p.Config.ListTags || p.Config.ListTasks {
+		var flag string
+		switch {
+		case p.Config.ListHosts:
 			flag = "--list-hosts"
+		case p.Config.ListTags:
+			flag = "--list-tags"
+		case p.Config.ListTasks:
+			flag = "--list-tasks"
+		default:
+			flag = "--syntax-check"
 		}
 		args = append(args, flag)
 		args = append(args, p.Config.Playbooks...)
@@ -474,6 +495,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 		{flag: "--tags", value: p.Config.Tags},
 		{flag: "--skip-tags", value: p.Config.SkipTags},
 		{flag: "--start-at-task", value: p.Config.StartAtTask},
+		{flag: "--module-path", value: p.Config.ModulePath},
 	}
 	for _, opt := range options {
 		args = applyOption(args, opt)
@@ -546,24 +568,24 @@ func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, e
 
 	tmpFile, err := os.CreateTemp(tempDir, prefix)
 	if err != nil {
-		return "", errors.Wrap(err, "could not create temp file")
+		return "", fmt.Errorf("could not create temp file: %w", err)
 	}
 	filename := tmpFile.Name()
 
 	if _, err := tmpFile.WriteString(content); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(filename)
-		return "", errors.Wrap(err, "could not write temp file")
+		return "", fmt.Errorf("could not write temp file: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(filename)
-		return "", errors.Wrap(err, "could not close temp file")
+		return "", fmt.Errorf("could not close temp file: %w", err)
 	}
 
 	if err := os.Chmod(filename, perm); err != nil {
 		_ = os.Remove(filename)
-		return "", errors.Wrap(err, "could not set permissions on temp file")
+		return "", fmt.Errorf("could not set permissions on temp file: %w", err)
 	}
 
 	return filename, nil
