@@ -4,14 +4,13 @@ package ansible
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -121,16 +120,16 @@ func (p *Playbook) Exec(ctx context.Context) error {
 	defer p.cleanupTempFiles()
 
 	if err := p.resolvePlaybooks(); err != nil {
-		return errors.Wrap(err, "failed to resolve playbooks")
+		return fmt.Errorf("failed to resolve playbooks: %w", err)
 	}
 
 	if err := p.prepareTempFiles(); err != nil {
-		return errors.Wrap(err, "failed to prepare temporary files")
+		return fmt.Errorf("failed to prepare temporary files: %w", err)
 	}
 
 	cmds, err := p.buildCommands(ctx)
 	if err != nil {
-		return errors.Wrap(err, "failed to build commands")
+		return fmt.Errorf("failed to build commands: %w", err)
 	}
 
 	return p.runCommands(ctx, cmds)
@@ -194,14 +193,14 @@ func (p *Playbook) resolvePlaybooks() error {
 				if _, err := os.Stat(file); err == nil {
 					playbooks = append(playbooks, file)
 				} else {
-					return errors.Wrapf(err, "playbook not found: %s", file)
+					return fmt.Errorf("playbook not found: %s: %w", file, err)
 				}
 			}
 		} else if _, err := os.Stat(pattern); err == nil {
 			// Try as direct file path
 			playbooks = append(playbooks, pattern)
 		} else {
-			return errors.Errorf("playbook not found: %s", pattern)
+			return fmt.Errorf("playbook not found: %s", pattern)
 		}
 	}
 
@@ -219,7 +218,7 @@ func (p *Playbook) prepareTempFiles() error {
 	if p.Config.PrivateKey != "" {
 		file, err := writeTempFile(p.Config.TempDir, "ansible-key-", p.Config.PrivateKey, 0600)
 		if err != nil {
-			return errors.Wrap(err, "could not create private key file")
+			return fmt.Errorf("could not create private key file: %w", err)
 		}
 		p.Config.PrivateKeyFile = file
 		p.tempFiles = append(p.tempFiles, file)
@@ -227,7 +226,7 @@ func (p *Playbook) prepareTempFiles() error {
 	if p.Config.VaultPassword != "" {
 		file, err := writeTempFile(p.Config.TempDir, "ansible-vault-", p.Config.VaultPassword, 0600)
 		if err != nil {
-			return errors.Wrap(err, "could not create vault password file")
+			return fmt.Errorf("could not create vault password file: %w", err)
 		}
 		p.Config.VaultPasswordFile = file
 		p.tempFiles = append(p.tempFiles, file)
@@ -253,7 +252,7 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 	// Galaxy commands (if GalaxyFile is set)
 	if p.Config.GalaxyFile != "" {
 		if _, err := os.Stat(p.Config.GalaxyFile); os.IsNotExist(err) {
-			return nil, errors.Errorf("galaxy file not found: %s", p.Config.GalaxyFile)
+			return nil, fmt.Errorf("galaxy file not found: %s", p.Config.GalaxyFile)
 		}
 		cmds = append(cmds, p.galaxyRoleCommand(ctx), p.galaxyCollectionCommand(ctx))
 	}
@@ -286,7 +285,7 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 		}
 		if err := cmd.Run(); err != nil {
 			cmdName := filepath.Base(cmd.Path)
-			return errors.Wrapf(err, "error executing %s (command %d/%d)", cmdName, i+1, len(cmds))
+			return fmt.Errorf("error executing %s (command %d/%d): %w", cmdName, i+1, len(cmds), err)
 		}
 	}
 	return nil
@@ -299,7 +298,7 @@ func validateInventory(inv string) error {
 		return nil
 	}
 	if _, err := os.Stat(inv); os.IsNotExist(err) {
-		return errors.Errorf("inventory not found: %s", inv)
+		return fmt.Errorf("inventory not found: %s", inv)
 	}
 	return nil
 }
@@ -359,11 +358,10 @@ func addVerbose(args []string, level int) []string {
 	if level <= 0 {
 		return args
 	}
-	verboseFlag := "-"
-	for i := 0; i < level && i < maxVerboseLevel; i++ {
-		verboseFlag += "v"
+	if level > maxVerboseLevel {
+		level = maxVerboseLevel
 	}
-	return append(args, verboseFlag)
+	return append(args, "-"+strings.Repeat("v", level))
 }
 
 // appendExtraVars appends all extra-vars to the args slice.
@@ -546,24 +544,24 @@ func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, e
 
 	tmpFile, err := os.CreateTemp(tempDir, prefix)
 	if err != nil {
-		return "", errors.Wrap(err, "could not create temp file")
+		return "", fmt.Errorf("could not create temp file: %w", err)
 	}
 	filename := tmpFile.Name()
 
 	if _, err := tmpFile.WriteString(content); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(filename)
-		return "", errors.Wrap(err, "could not write temp file")
+		return "", fmt.Errorf("could not write temp file: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(filename)
-		return "", errors.Wrap(err, "could not close temp file")
+		return "", fmt.Errorf("could not close temp file: %w", err)
 	}
 
 	if err := os.Chmod(filename, perm); err != nil {
 		_ = os.Remove(filename)
-		return "", errors.Wrap(err, "could not set permissions on temp file")
+		return "", fmt.Errorf("could not set permissions on temp file: %w", err)
 	}
 
 	return filename, nil

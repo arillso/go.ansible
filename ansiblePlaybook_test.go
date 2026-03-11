@@ -1,11 +1,5 @@
-// ansiblePlaybook_test.go
-// Description: Comprehensive tests for the ansible package.
-// Author: Your Name
-// These tests cover functions such as:
-// - resolvePlaybooks: Resolving playbook file paths from patterns.
-// - prepareTempFiles & cleanupTempFiles: Creating and cleaning up temporary files.
-// - buildCustomEnvVars: Assembling additional environment variables.
-// - Other helper functions like addVerbose, appendExtraVars, and writeTempFile.
+// Tests for the ansible package covering playbook resolution, temporary file
+// management, environment variable assembly, and helper functions.
 
 package ansible
 
