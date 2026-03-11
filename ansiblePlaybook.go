@@ -14,6 +14,14 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	// defaultForks is the default number of parallel processes for Ansible.
+	defaultForks = 5
+
+	// maxVerboseLevel is the maximum verbosity level supported by Ansible (-vvvv).
+	maxVerboseLevel = 4
+)
+
 // Config contains configuration options for running Ansible playbooks.
 type Config struct {
 	// General options
@@ -89,6 +97,7 @@ type Config struct {
 }
 
 // Playbook represents an execution of an Ansible playbook run.
+// Playbook is not safe for concurrent use. Create separate instances for concurrent use.
 type Playbook struct {
 	Config    Config
 	Debug     bool // Enables additional logging output
@@ -99,7 +108,7 @@ type Playbook struct {
 func NewPlaybook() *Playbook {
 	return &Playbook{
 		Config: Config{
-			Forks:   5,
+			Forks:   defaultForks,
 			TempDir: os.TempDir(),
 		},
 	}
@@ -260,15 +269,17 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 	return cmds, nil
 }
 
-// runCommands executes the given commands sequentially, using the provided context.
-func (p *Playbook) runCommands(ctx context.Context, cmds []*exec.Cmd) error {
-	_ = ctx
-
-	envVars := buildCustomEnvVars(p.Config)
+// runCommands executes the given commands sequentially.
+// The context is already embedded in each exec.Cmd via exec.CommandContext.
+func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
+	envVars := buildCustomEnvVars(&p.Config)
 	for i, cmd := range cmds {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.Env = append(os.Environ(), "ANSIBLE_FORCE_COLOR=1", "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
+		cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
+		if !p.Config.NoColor {
+			cmd.Env = append(cmd.Env, "ANSIBLE_FORCE_COLOR=1")
+		}
 		cmd.Env = append(cmd.Env, envVars...)
 		if p.Debug {
 			p.trace(cmd)
@@ -294,7 +305,7 @@ func validateInventory(inv string) error {
 }
 
 // buildCustomEnvVars constructs additional environment variables for Ansible.
-func buildCustomEnvVars(cfg Config) []string {
+func buildCustomEnvVars(cfg *Config) []string {
 	var env []string
 	if cfg.ConfigFile != "" {
 		if _, err := os.Stat(cfg.ConfigFile); err == nil {
@@ -349,7 +360,7 @@ func addVerbose(args []string, level int) []string {
 		return args
 	}
 	verboseFlag := "-"
-	for i := 0; i < level && i < 4; i++ {
+	for i := 0; i < level && i < maxVerboseLevel; i++ {
 		verboseFlag += "v"
 	}
 	return append(args, verboseFlag)
@@ -371,9 +382,8 @@ func (p *Playbook) versionCommand(ctx context.Context) *exec.Cmd {
 }
 
 // buildGalaxyCommand constructs a galaxy command using a base command and given options.
+// The context is passed through to exec.CommandContext for cancellation support.
 func (p *Playbook) buildGalaxyCommand(ctx context.Context, base []string, opts []argOption) *exec.Cmd {
-	// Ensure ctx is used.
-	_ = ctx
 	args := make([]string, len(base))
 	copy(args, base)
 	for _, opt := range opts {
@@ -383,44 +393,37 @@ func (p *Playbook) buildGalaxyCommand(ctx context.Context, base []string, opts [
 	return exec.CommandContext(ctx, "ansible-galaxy", args...)
 }
 
-// jscpd:ignore-start
-// galaxyRoleCommand creates the command to install Ansible Galaxy roles.
-func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
-	// Mark ctx as used explicitly
-	_ = ctx
-	opts := []argOption{
-		{flag: "--role-file", value: p.Config.GalaxyFile},
+// commonGalaxyOptions returns a fresh slice of options shared by both role and collection install commands.
+func (p *Playbook) commonGalaxyOptions() []argOption {
+	return []argOption{
 		{flag: "--server", value: p.Config.GalaxyAPIServerURL},
 		{flag: "--api-key", value: p.Config.GalaxyAPIKey},
 		{flag: "--ignore-certs", value: p.Config.GalaxyIgnoreCerts},
 		{flag: "--timeout", value: p.Config.GalaxyTimeout},
 		{flag: "--force", value: p.Config.GalaxyForce},
-		{flag: "--no-deps", value: p.Config.GalaxyNoDeps},
 		{flag: "--force-with-deps", value: p.Config.GalaxyForceWithDeps},
 	}
+}
+
+// galaxyRoleCommand creates the command to install Ansible Galaxy roles.
+func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
+	opts := append(p.commonGalaxyOptions(),
+		argOption{flag: "--role-file", value: p.Config.GalaxyFile},
+		argOption{flag: "--no-deps", value: p.Config.GalaxyNoDeps},
+	)
 	return p.buildGalaxyCommand(ctx, []string{"role", "install"}, opts)
 }
 
 // galaxyCollectionCommand creates the command to install Ansible Galaxy collections.
 func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
-	// Mark ctx as used explicitly
-	_ = ctx
-	opts := []argOption{
-		{flag: "--requirements-file", value: p.Config.GalaxyFile},
-		{flag: "--server", value: p.Config.GalaxyAPIServerURL},
-		{flag: "--api-key", value: p.Config.GalaxyAPIKey},
-		{flag: "--ignore-certs", value: p.Config.GalaxyIgnoreCerts},
-		{flag: "--timeout", value: p.Config.GalaxyTimeout},
-		{flag: "--force-with-deps", value: p.Config.GalaxyForceWithDeps},
-		{flag: "--collections-path", value: p.Config.GalaxyCollectionsPath},
-		{flag: "--pre", value: p.Config.GalaxyPre},
-		{flag: "--upgrade", value: p.Config.GalaxyUpgrade},
-		{flag: "--force", value: p.Config.GalaxyForce},
-	}
+	opts := append(p.commonGalaxyOptions(),
+		argOption{flag: "--requirements-file", value: p.Config.GalaxyFile},
+		argOption{flag: "--collections-path", value: p.Config.GalaxyCollectionsPath},
+		argOption{flag: "--pre", value: p.Config.GalaxyPre},
+		argOption{flag: "--upgrade", value: p.Config.GalaxyUpgrade},
+	)
 	return p.buildGalaxyCommand(ctx, []string{"collection", "install"}, opts)
 }
-
-// jscpd:ignore-end
 
 // ansibleCommand creates the command to run an Ansible playbook for the specified inventory.
 func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.Cmd {
@@ -483,6 +486,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 }
 
 // trace prints the full command line to standard output.
+// Warning: This may expose sensitive data such as extra-vars containing passwords or tokens.
 func (p *Playbook) trace(cmd *exec.Cmd) {
 	fmt.Printf("$ %s\n", strings.Join(cmd.Args, " "))
 }
@@ -546,7 +550,7 @@ func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, e
 	}
 	filename := tmpFile.Name()
 
-	if _, err := tmpFile.Write([]byte(content)); err != nil {
+	if _, err := tmpFile.WriteString(content); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(filename)
 		return "", errors.Wrap(err, "could not write temp file")

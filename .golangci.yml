@@ -1,0 +1,37 @@
+---
+version: "2"
+
+linters:
+    enable:
+        - errcheck
+        - govet
+        - staticcheck
+        - gosec
+        - ineffassign
+        - unused
+        - misspell
+        - gocritic
+    settings:
+        errcheck:
+            check-blank: false
+        govet:
+            enable-all: true
+            disable:
+                - fieldalignment
+                - shadow
+        gosec:
+            excludes:
+                - G101
+                - G117
+                - G204
+                - G304
+                - G306
+                - G703
+        gocritic:
+            enabled-tags:
+                - diagnostic
+                - performance
+
+formatters:
+    enable:
+        - gofmt

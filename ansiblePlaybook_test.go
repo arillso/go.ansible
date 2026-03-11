@@ -11,6 +11,7 @@ package ansible
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -244,7 +245,7 @@ func TestBuildCustomEnvVars(t *testing.T) {
 	cfg.FactCaching = "jsonfile"
 	cfg.FactCachingTimeout = 60
 
-	envVars := buildCustomEnvVars(cfg)
+	envVars := buildCustomEnvVars(&cfg)
 	var foundConfig, foundFactCaching, foundFactCachingTimeout bool
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "ANSIBLE_CONFIG=") {
@@ -683,25 +684,167 @@ func TestIsValidSSHKey(t *testing.T) {
 	}
 }
 
-// TestExec simulates a call to Exec without actually executing external commands
-// by using a short timeout context. Note: This test focuses on flow and error handling.
-func TestExec(t *testing.T) {
+// TestExecNoPlaybooks verifies that Exec returns an error when no playbooks are specified.
+func TestExecNoPlaybooks(t *testing.T) {
 	pb := NewPlaybook()
-	// Set a dummy playbook; the content is not important for this test.
-	pb.Config.Playbooks = []string{"playbook.yml"}
-	// Use inline inventory.
 	pb.Config.Inventories = []string{getInventoryHost() + ","}
 
-	// Create a context with timeout to ensure the test terminates.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Since actual external commands may not be executed in the test environment,
-	// we expect either quick error handling or a timeout.
 	err := pb.Exec(ctx)
+	if err == nil {
+		t.Fatal("expected error when no playbooks are specified, got nil")
+	}
+	if !strings.Contains(err.Error(), "no playbooks specified") {
+		t.Errorf("expected 'no playbooks specified' error, got: %v", err)
+	}
+}
+
+// TestExecNonExistentPlaybook verifies that Exec returns an error for a non-existent playbook file.
+func TestExecNonExistentPlaybook(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"/nonexistent/playbook.yml"}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := pb.Exec(ctx)
+	if err == nil {
+		t.Fatal("expected error for non-existent playbook, got nil")
+	}
+	if !strings.Contains(err.Error(), "playbook not found") {
+		t.Errorf("expected 'playbook not found' error, got: %v", err)
+	}
+}
+
+// TestExecInvalidPrivateKey verifies that Exec returns an error for an invalid SSH key.
+func TestExecInvalidPrivateKey(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-exec-key")
 	if err != nil {
-		t.Logf("pb.Exec returned an expected error: %v", err)
-	} else {
-		t.Log("pb.Exec executed without error (this might be unexpected in the test environment)")
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy content"), 0644); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.PrivateKey = "not-a-valid-key"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = pb.Exec(ctx)
+	if err == nil {
+		t.Fatal("expected error for invalid private key, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid SSH key format") {
+		t.Errorf("expected 'invalid SSH key format' error, got: %v", err)
+	}
+}
+
+// TestExecCleanupAfterError verifies that temporary files are cleaned up even when Exec returns an error.
+func TestExecCleanupAfterError(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-exec-cleanup")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy content"), 0644); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.VaultPassword = "test-vault-pass"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Exec will fail (either timeout or missing ansible binary) but should still clean up
+	_ = pb.Exec(ctx)
+
+	// Verify that at least one temporary file was tracked (vault password)
+	if len(pb.tempFiles) == 0 {
+		t.Fatal("expected at least one temporary file to be tracked for cleanup verification")
+	}
+
+	// Verify that temporary files were cleaned up
+	for _, f := range pb.tempFiles {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("temporary file %s was not cleaned up after error", f)
+		}
+	}
+}
+
+// TestExecContextCancellation verifies that Exec respects context cancellation.
+func TestExecContextCancellation(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-exec-cancel")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy content"), 0644); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = pb.Exec(ctx)
+	if err == nil {
+		t.Skip("skipping context-cancellation check: ansible binary not available")
+	}
+	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context") {
+		t.Errorf("expected context cancellation error, got: %v", err)
+	}
+}
+
+// TestExecNonExistentGalaxyFile verifies that Exec returns an error for a non-existent galaxy file.
+func TestExecNonExistentGalaxyFile(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-exec-galaxy")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy content"), 0644); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.GalaxyFile = "/nonexistent/requirements.yml"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = pb.Exec(ctx)
+	if err == nil {
+		t.Fatal("expected error for non-existent galaxy file, got nil")
+	}
+	if !strings.Contains(err.Error(), "galaxy file not found") {
+		t.Errorf("expected 'galaxy file not found' error, got: %v", err)
 	}
 }
