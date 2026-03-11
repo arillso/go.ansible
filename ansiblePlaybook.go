@@ -277,7 +277,7 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 // runCommands executes the given commands sequentially.
 // The context is already embedded in each exec.Cmd via exec.CommandContext.
 func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
-	envVars := buildCustomEnvVars(p.Config)
+	envVars := buildCustomEnvVars(&p.Config)
 	for i, cmd := range cmds {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -310,7 +310,7 @@ func validateInventory(inv string) error {
 }
 
 // buildCustomEnvVars constructs additional environment variables for Ansible.
-func buildCustomEnvVars(cfg Config) []string {
+func buildCustomEnvVars(cfg *Config) []string {
 	var env []string
 	if cfg.ConfigFile != "" {
 		if _, err := os.Stat(cfg.ConfigFile); err == nil {
@@ -555,7 +555,7 @@ func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, e
 	}
 	filename := tmpFile.Name()
 
-	if _, err := tmpFile.Write([]byte(content)); err != nil {
+	if _, err := tmpFile.WriteString(content); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(filename)
 		return "", errors.Wrap(err, "could not write temp file")

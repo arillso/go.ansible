@@ -244,7 +244,7 @@ func TestBuildCustomEnvVars(t *testing.T) {
 	cfg.FactCaching = "jsonfile"
 	cfg.FactCachingTimeout = 60
 
-	envVars := buildCustomEnvVars(cfg)
+	envVars := buildCustomEnvVars(&cfg)
 	var foundConfig, foundFactCaching, foundFactCachingTimeout bool
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "ANSIBLE_CONFIG=") {

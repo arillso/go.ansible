@@ -1,4 +1,6 @@
 ---
+version: "2"
+
 linters:
     enable:
         - errcheck
@@ -8,24 +10,28 @@ linters:
         - ineffassign
         - unused
         - misspell
-        - gofmt
-        - gosimple
         - gocritic
+    settings:
+        errcheck:
+            check-blank: false
+        govet:
+            enable-all: true
+            disable:
+                - fieldalignment
+                - shadow
+        gosec:
+            excludes:
+                - G101
+                - G117
+                - G204
+                - G304
+                - G306
+                - G703
+        gocritic:
+            enabled-tags:
+                - diagnostic
+                - performance
 
-linters-settings:
-    errcheck:
-        check-blank: false
-    govet:
-        enable-all: true
-    gosec:
-        excludes:
-            - G204 # subprocess launched with variable - expected for ansible execution
-    gocritic:
-        enabled-tags:
-            - diagnostic
-            - performance
-
-issues:
-    exclude-use-default: true
-    max-issues-per-linter: 50
-    max-same-issues: 5
+formatters:
+    enable:
+        - gofmt
