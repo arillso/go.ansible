@@ -62,4 +62,4 @@ MIT License
 
 ## Copyright
 
-(c) 2026, Arillso
+(c) 2021-2026, Arillso
