@@ -113,7 +113,6 @@ type Config struct {
 	ExtraVars                   []string
 	StartAtTask, Tags, SkipTags string
 	ModulePath                  []string
-	ModuleName                  string
 	Verbose                     int
 	NoColor                     bool
 
@@ -123,7 +122,6 @@ type Config struct {
 
 	// Facts options
 	FactPath           string
-	InvalidateCache    bool
 	FactCaching        string
 	FactCachingTimeout int
 
@@ -151,13 +149,10 @@ type Config struct {
 	GatherTimeout     int
 	StrategyPlugin    string
 	MaxFailPercentage int
-	AnyErrorsFatal    bool
-	Requirements      string
-	ModuleDefaults    map[string]string
+	AnyErrorsFatal bool
 	// ConfigFile is the path to an Ansible configuration file.
 	// If set, the file must exist or Exec will return an error.
-	ConfigFile     string
-	MetadataExport string
+	ConfigFile string
 
 	// Optional: directory for temporary files
 	TempDir string
@@ -326,13 +321,15 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 		cmds = append(cmds, p.galaxyRoleCommand(ctx), p.galaxyCollectionCommand(ctx))
 	}
 
-	// Build Ansible commands for each inventory
+	// Validate all inventories
 	for _, inv := range p.Config.Inventories {
 		if err := validateInventory(inv); err != nil {
 			return nil, err
 		}
-		cmds = append(cmds, p.ansibleCommand(ctx, inv))
 	}
+
+	// Build a single Ansible command with all inventories
+	cmds = append(cmds, p.ansibleCommand(ctx, p.Config.Inventories))
 
 	return cmds, nil
 }
@@ -520,9 +517,12 @@ func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
 	return p.buildGalaxyCommand(ctx, []string{"collection", "install"}, opts)
 }
 
-// ansibleCommand creates the command to run an Ansible playbook for the specified inventory.
-func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.Cmd {
-	args := []string{"--inventory", inventory}
+// ansibleCommand creates the command to run an Ansible playbook with the specified inventories.
+func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *exec.Cmd {
+	var args []string
+	for _, inv := range inventories {
+		args = append(args, "--inventory", inv)
+	}
 	if p.Config.SyntaxCheck || p.Config.ListHosts || p.Config.ListTags || p.Config.ListTasks {
 		var flag string
 		switch {

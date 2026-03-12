@@ -370,7 +370,7 @@ func TestAnsibleCommand(t *testing.T) {
 	// Set a dummy playbook name.
 	pb.Config.Playbooks = []string{"playbook.yml"}
 	inv := getInventoryHost() + "," // Use the helper function to get the inventory host and append a comma.
-	cmd := pb.ansibleCommand(context.Background(), inv)
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
 
 	// Check if the command path contains "ansible-playbook".
 	if !strings.Contains(cmd.Path, "ansible-playbook") {
@@ -751,7 +751,7 @@ func TestAnsibleCommandListTags(t *testing.T) {
 	pb.Config.Playbooks = []string{"playbook.yml"}
 	pb.Config.ListTags = true
 	inv := getInventoryHost() + ","
-	cmd := pb.ansibleCommand(context.Background(), inv)
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
 
 	found := false
 	for _, arg := range cmd.Args {
@@ -771,7 +771,7 @@ func TestAnsibleCommandListTasks(t *testing.T) {
 	pb.Config.Playbooks = []string{"playbook.yml"}
 	pb.Config.ListTasks = true
 	inv := getInventoryHost() + ","
-	cmd := pb.ansibleCommand(context.Background(), inv)
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
 
 	found := false
 	for _, arg := range cmd.Args {
@@ -1790,7 +1790,7 @@ func TestAnsibleCommandSyntaxCheck(t *testing.T) {
 	pb.Config.Playbooks = []string{"playbook.yml"}
 	pb.Config.SyntaxCheck = true
 	inv := getInventoryHost() + ","
-	cmd := pb.ansibleCommand(context.Background(), inv)
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
 
 	found := false
 	for _, arg := range cmd.Args {
@@ -1810,7 +1810,7 @@ func TestAnsibleCommandListHosts(t *testing.T) {
 	pb.Config.Playbooks = []string{"playbook.yml"}
 	pb.Config.ListHosts = true
 	inv := getInventoryHost() + ","
-	cmd := pb.ansibleCommand(context.Background(), inv)
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
 
 	found := false
 	for _, arg := range cmd.Args {
@@ -1957,5 +1957,53 @@ func TestAnsibleExitCodeConstants(t *testing.T) {
 	}
 	if ExitCodeUnexpected != 250 {
 		t.Errorf("ExitCodeUnexpected = %d, want 250", ExitCodeUnexpected)
+	}
+}
+
+// TestAnsibleCommandMultipleInventories verifies that multiple inventories produce multiple -i flags in one command.
+func TestAnsibleCommandMultipleInventories(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	inv1 := getInventoryHost() + ","
+	inv2 := "staging,"
+
+	cmd := pb.ansibleCommand(context.Background(), []string{inv1, inv2})
+
+	// Both inventories should appear as --inventory flags
+	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, "--inventory "+inv1) {
+		t.Errorf("Expected inventory %q in args: %s", inv1, args)
+	}
+	if !strings.Contains(args, "--inventory "+inv2) {
+		t.Errorf("Expected inventory %q in args: %s", inv2, args)
+	}
+}
+
+// TestBuildCommandsSinglePlaybookCommand verifies that multiple inventories produce a single ansible-playbook command.
+func TestBuildCommandsSinglePlaybookCommand(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-multi-inv")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ",", "staging,"}
+
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
+
+	// Expect exactly 2 commands: the version probe and a single ansible-playbook call.
+	if len(cmds) != 2 {
+		t.Errorf("Expected 2 commands (version + single playbook), got %d", len(cmds))
 	}
 }
