@@ -23,7 +23,7 @@ linters:
             excludes:
                 - G101
                 - G117
-                - G204
+
                 - G304
                 - G306
                 - G703
