@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,12 +40,16 @@ type AnsibleError struct {
 	Command string
 	// Message is a human-readable description of the error.
 	Message string
+	// CommandIndex is the 1-based index of the failed command in the sequence.
+	CommandIndex int
+	// TotalCommands is the total number of commands in the sequence.
+	TotalCommands int
 	// Err is the underlying error from exec.Cmd.Run.
 	Err error
 }
 
 func (e *AnsibleError) Error() string {
-	return fmt.Sprintf("%s: %s (exit code %d)", e.Command, e.Message, e.ExitCode)
+	return fmt.Sprintf("%s: %s (exit code %d, command %d/%d)", e.Command, e.Message, e.ExitCode, e.CommandIndex, e.TotalCommands)
 }
 
 func (e *AnsibleError) Unwrap() error {
@@ -149,8 +154,10 @@ type Config struct {
 	AnyErrorsFatal    bool
 	Requirements      string
 	ModuleDefaults    map[string]string
-	ConfigFile        string
-	MetadataExport    string
+	// ConfigFile is the path to an Ansible configuration file.
+	// If set, the file must exist or Exec will return an error.
+	ConfigFile     string
+	MetadataExport string
 
 	// Optional: directory for temporary files
 	TempDir string
@@ -159,9 +166,10 @@ type Config struct {
 // Playbook represents an execution of an Ansible playbook run.
 // Playbook is not safe for concurrent use. Create separate instances for concurrent use.
 type Playbook struct {
-	Config    Config
-	Debug     bool // Enables additional logging output
-	tempFiles []string
+	Config      Config
+	Debug       bool      // Enables additional logging output
+	TraceOutput io.Writer // Output destination for trace/debug output (defaults to os.Stdout)
+	tempFiles   []string
 }
 
 // NewPlaybook returns a new instance of Playbook with default values.
@@ -350,6 +358,8 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 		if err := cmd.Run(); err != nil {
 			cmdName := filepath.Base(cmd.Path)
 			if ae := newAnsibleError(cmdName, err); ae != nil {
+				ae.CommandIndex = i + 1
+				ae.TotalCommands = len(cmds)
 				return ae
 			}
 			return fmt.Errorf("error executing %s (command %d/%d): %w", cmdName, i+1, len(cmds), err)
@@ -448,7 +458,7 @@ func appendExtraVars(args []string, extraVars []string) []string {
 
 // versionCommand creates the command to display the Ansible version.
 func (p *Playbook) versionCommand(ctx context.Context) *exec.Cmd {
-	return exec.CommandContext(ctx, "ansible", "--version") //nolint:gosec // command args are not user-controlled
+	return exec.CommandContext(ctx, "ansible", "--version") //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 }
 
 // buildGalaxyCommand constructs a galaxy command using a base command and given options.
@@ -460,7 +470,7 @@ func (p *Playbook) buildGalaxyCommand(ctx context.Context, base []string, opts [
 		args = applyOption(args, opt)
 	}
 	args = addVerbose(args, p.Config.Verbose)
-	return exec.CommandContext(ctx, "ansible-galaxy", args...) //nolint:gosec // command args are built from validated config
+	return exec.CommandContext(ctx, "ansible-galaxy", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 }
 
 // commonGalaxyOptions returns a fresh slice of options shared by both role and collection install commands.
@@ -527,7 +537,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 		}
 		args = append(args, flag)
 		args = append(args, p.Config.Playbooks...)
-		return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // command args are built from validated config
+		return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 	}
 
 	options := []argOption{
@@ -575,30 +585,46 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 	args = appendExtraVars(args, p.Config.ExtraVars)
 	args = addVerbose(args, p.Config.Verbose)
 	args = append(args, p.Config.Playbooks...)
-	return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // command args are built from validated config
+	return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 }
 
 // sensitiveFlags lists command-line flags whose values should be masked in trace output.
 var sensitiveFlags = map[string]bool{
 	"--extra-vars":          true,
+	"-e":                    true,
 	"--vault-password-file": true,
+	"--vault-pass-file":     true,
 	"--private-key":         true,
 	"--api-key":             true,
 }
 
-// trace prints the full command line to standard output.
+// trace prints the full command line to the configured TraceOutput (or os.Stdout).
 // Values of sensitive flags (e.g. --extra-vars, --vault-password-file) are masked.
 func (p *Playbook) trace(cmd *exec.Cmd) {
-	fmt.Printf("$ %s\n", strings.Join(maskSensitiveArgs(cmd.Args), " "))
+	w := p.TraceOutput
+	if w == nil {
+		w = os.Stdout
+	}
+	_, _ = fmt.Fprintf(w, "$ %s\n", strings.Join(maskSensitiveArgs(cmd.Args), " "))
 }
 
 // maskSensitiveArgs returns a copy of args with values of sensitive flags replaced by "******".
 func maskSensitiveArgs(args []string) []string {
 	masked := make([]string, len(args))
 	copy(masked, args)
-	for i := 0; i < len(masked)-1; i++ {
-		if sensitiveFlags[masked[i]] {
+	for i := 0; i < len(masked); i++ {
+		arg := masked[i]
+		// Handle --flag=value form (e.g. --extra-vars=secret)
+		for flag := range sensitiveFlags {
+			if strings.HasPrefix(arg, flag+"=") {
+				masked[i] = flag + "=******"
+				break
+			}
+		}
+		// Handle --flag value form (e.g. --extra-vars secret)
+		if sensitiveFlags[arg] && i < len(masked)-1 {
 			masked[i+1] = "******"
+			i++ // skip the value we just masked
 		}
 	}
 	return masked

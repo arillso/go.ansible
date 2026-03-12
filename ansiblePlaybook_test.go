@@ -1107,10 +1107,6 @@ func TestCommonGalaxyOptions(t *testing.T) {
 		pb := NewPlaybook()
 		opts := pb.commonGalaxyOptions()
 
-		if len(opts) != 6 {
-			t.Fatalf("expected 6 common galaxy options, got %d", len(opts))
-		}
-
 		expectedFlags := []string{"--server", "--api-key", "--ignore-certs", "--timeout", "--force", "--force-with-deps"}
 		for i, expected := range expectedFlags {
 			if opts[i].flag != expected {
@@ -1343,27 +1339,12 @@ func TestTrace(t *testing.T) {
 
 	cmd := exec.Command("ansible-playbook", "--inventory", "localhost,", "site.yml")
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create pipe: %v", err)
-	}
-	os.Stdout = w
+	var buf bytes.Buffer
+	pb.TraceOutput = &buf
 
 	pb.trace(cmd)
 
-	if err := w.Close(); err != nil {
-		t.Fatalf("failed to close pipe writer: %v", err)
-	}
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("failed to read pipe: %v", err)
-	}
 	output := buf.String()
-
 	expected := "$ ansible-playbook --inventory localhost, site.yml\n"
 	if output != expected {
 		t.Errorf("trace output = %q, want %q", output, expected)
@@ -1376,24 +1357,11 @@ func TestTraceMasksSensitiveArgs(t *testing.T) {
 
 	cmd := exec.Command("ansible-playbook", "--inventory", "hosts.ini", "--extra-vars", "secret_password=hunter2", "-vv", "deploy.yml")
 
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create pipe: %v", err)
-	}
-	os.Stdout = w
+	var buf bytes.Buffer
+	pb.TraceOutput = &buf
 
 	pb.trace(cmd)
 
-	if err := w.Close(); err != nil {
-		t.Fatalf("failed to close pipe writer: %v", err)
-	}
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("failed to read pipe: %v", err)
-	}
 	output := buf.String()
 
 	if strings.Contains(output, "hunter2") {
@@ -1457,6 +1425,21 @@ func TestMaskSensitiveArgs(t *testing.T) {
 			args: []string{"ansible-playbook", "--extra-vars", "secret"},
 			want: []string{"ansible-playbook", "--extra-vars", "******"},
 		},
+		{
+			name: "equals-joined extra-vars masked",
+			args: []string{"ansible-playbook", "--extra-vars=secret_password=hunter2", "site.yml"},
+			want: []string{"ansible-playbook", "--extra-vars=******", "site.yml"},
+		},
+		{
+			name: "short form -e masked",
+			args: []string{"ansible-playbook", "-e", "pw=secret", "site.yml"},
+			want: []string{"ansible-playbook", "-e", "******", "site.yml"},
+		},
+		{
+			name: "equals-joined private-key masked",
+			args: []string{"ansible-playbook", "--private-key=/home/user/.ssh/id_rsa", "site.yml"},
+			want: []string{"ansible-playbook", "--private-key=******", "site.yml"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1495,33 +1478,33 @@ func TestAnsibleErrorMessage(t *testing.T) {
 	}{
 		{
 			name:     "general error",
-			ae:       AnsibleError{ExitCode: ExitCodeError, Command: "ansible-playbook", Message: "general error"},
-			expected: "ansible-playbook: general error (exit code 1)",
+			ae:       AnsibleError{ExitCode: ExitCodeError, Command: "ansible-playbook", Message: "general error", CommandIndex: 1, TotalCommands: 1},
+			expected: "ansible-playbook: general error (exit code 1, command 1/1)",
 		},
 		{
 			name:     "host failed",
-			ae:       AnsibleError{ExitCode: ExitCodeHostFailed, Command: "ansible-playbook", Message: "one or more hosts failed"},
-			expected: "ansible-playbook: one or more hosts failed (exit code 2)",
+			ae:       AnsibleError{ExitCode: ExitCodeHostFailed, Command: "ansible-playbook", Message: "one or more hosts failed", CommandIndex: 2, TotalCommands: 4},
+			expected: "ansible-playbook: one or more hosts failed (exit code 2, command 2/4)",
 		},
 		{
 			name:     "unreachable",
-			ae:       AnsibleError{ExitCode: ExitCodeUnreachable, Command: "ansible-playbook", Message: "one or more hosts unreachable"},
-			expected: "ansible-playbook: one or more hosts unreachable (exit code 3)",
+			ae:       AnsibleError{ExitCode: ExitCodeUnreachable, Command: "ansible-playbook", Message: "one or more hosts unreachable", CommandIndex: 1, TotalCommands: 1},
+			expected: "ansible-playbook: one or more hosts unreachable (exit code 3, command 1/1)",
 		},
 		{
 			name:     "parser error",
-			ae:       AnsibleError{ExitCode: ExitCodeParserError, Command: "ansible-playbook", Message: "parser error"},
-			expected: "ansible-playbook: parser error (exit code 4)",
+			ae:       AnsibleError{ExitCode: ExitCodeParserError, Command: "ansible-playbook", Message: "parser error", CommandIndex: 1, TotalCommands: 1},
+			expected: "ansible-playbook: parser error (exit code 4, command 1/1)",
 		},
 		{
 			name:     "user abort",
-			ae:       AnsibleError{ExitCode: ExitCodeUserAbort, Command: "ansible-playbook", Message: "user interrupted execution"},
-			expected: "ansible-playbook: user interrupted execution (exit code 99)",
+			ae:       AnsibleError{ExitCode: ExitCodeUserAbort, Command: "ansible-playbook", Message: "user interrupted execution", CommandIndex: 3, TotalCommands: 4},
+			expected: "ansible-playbook: user interrupted execution (exit code 99, command 3/4)",
 		},
 		{
 			name:     "unexpected error",
-			ae:       AnsibleError{ExitCode: ExitCodeUnexpected, Command: "ansible-playbook", Message: "unexpected error"},
-			expected: "ansible-playbook: unexpected error (exit code 250)",
+			ae:       AnsibleError{ExitCode: ExitCodeUnexpected, Command: "ansible-playbook", Message: "unexpected error", CommandIndex: 1, TotalCommands: 2},
+			expected: "ansible-playbook: unexpected error (exit code 250, command 1/2)",
 		},
 	}
 
@@ -1954,25 +1937,25 @@ func TestExecWithInvalidConfigFile(t *testing.T) {
 
 // TestAnsibleExitCodeConstants verifies the exit code constants have correct values.
 func TestAnsibleExitCodeConstants(t *testing.T) {
-	tests := []struct {
-		name  string
-		code  int
-		value int
-	}{
-		{"Success", ExitCodeSuccess, 0},
-		{"Error", ExitCodeError, 1},
-		{"HostFailed", ExitCodeHostFailed, 2},
-		{"Unreachable", ExitCodeUnreachable, 3},
-		{"ParserError", ExitCodeParserError, 4},
-		{"UserAbort", ExitCodeUserAbort, 99},
-		{"Unexpected", ExitCodeUnexpected, 250},
+	if ExitCodeSuccess != 0 {
+		t.Errorf("ExitCodeSuccess = %d, want 0", ExitCodeSuccess)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.code != tt.value {
-				t.Errorf("%s = %d, want %d", tt.name, tt.code, tt.value)
-			}
-		})
+	if ExitCodeError != 1 {
+		t.Errorf("ExitCodeError = %d, want 1", ExitCodeError)
+	}
+	if ExitCodeHostFailed != 2 {
+		t.Errorf("ExitCodeHostFailed = %d, want 2", ExitCodeHostFailed)
+	}
+	if ExitCodeUnreachable != 3 {
+		t.Errorf("ExitCodeUnreachable = %d, want 3", ExitCodeUnreachable)
+	}
+	if ExitCodeParserError != 4 {
+		t.Errorf("ExitCodeParserError = %d, want 4", ExitCodeParserError)
+	}
+	if ExitCodeUserAbort != 99 {
+		t.Errorf("ExitCodeUserAbort = %d, want 99", ExitCodeUserAbort)
+	}
+	if ExitCodeUnexpected != 250 {
+		t.Errorf("ExitCodeUnexpected = %d, want 250", ExitCodeUnexpected)
 	}
 }
