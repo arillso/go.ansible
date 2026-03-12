@@ -418,9 +418,9 @@ func TestBuildCommands(t *testing.T) {
 		t.Error("Expected at least one command in the command list")
 	}
 
-	// Check that the first command (version query) is built correctly.
-	if !strings.Contains(cmds[0].Path, "ansible") {
-		t.Errorf("Expected first command to query Ansible version, got: %s", cmds[0].Path)
+	// Check that the first command (playbook) is built correctly.
+	if !strings.Contains(cmds[0].Path, "ansible-playbook") {
+		t.Errorf("Expected first command to be ansible-playbook, got: %s", cmds[0].Path)
 	}
 }
 
@@ -1871,9 +1871,9 @@ func TestBuildCommandsWithGalaxyFile(t *testing.T) {
 		t.Fatalf("buildCommands failed: %v", err)
 	}
 
-	// Expect: version + galaxy role + galaxy collection + playbook = 4 commands
-	if len(cmds) != 4 {
-		t.Errorf("Expected 4 commands (version+role+collection+playbook), got %d", len(cmds))
+	// Expect: galaxy role + galaxy collection + playbook = 3 commands
+	if len(cmds) != 3 {
+		t.Errorf("Expected 3 commands (role+collection+playbook), got %d", len(cmds))
 	}
 }
 
@@ -2002,8 +2002,262 @@ func TestBuildCommandsSinglePlaybookCommand(t *testing.T) {
 		t.Fatalf("buildCommands failed: %v", err)
 	}
 
-	// Expect exactly 2 commands: the version probe and a single ansible-playbook call.
+	// Expect exactly 1 command: a single ansible-playbook call with all inventories.
+	if len(cmds) != 1 {
+		t.Errorf("Expected 1 command (single playbook), got %d", len(cmds))
+	}
+}
+
+// TestBuildCommandsShowVersion verifies that the version command is included when ShowVersion is set.
+func TestBuildCommandsShowVersion(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-showversion")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy content"), 0644); err != nil {
+		t.Fatalf("Failed to write dummy playbook file: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.ShowVersion = true
+
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
 	if len(cmds) != 2 {
-		t.Errorf("Expected 2 commands (version + single playbook), got %d", len(cmds))
+		t.Errorf("Expected 2 commands (version + playbook), got %d", len(cmds))
+	}
+	if !strings.HasSuffix(cmds[0].Path, "ansible") || strings.HasSuffix(cmds[0].Path, "ansible-playbook") {
+		t.Errorf("Expected first command to be ansible (version), got: %s", cmds[0].Path)
+	}
+}
+
+// TestStdoutStderrConfigurable verifies that command output is directed to custom writers.
+func TestStdoutStderrConfigurable(t *testing.T) {
+	pb := NewPlaybook()
+
+	var stdout, stderr bytes.Buffer
+	pb.Stdout = &stdout
+	pb.Stderr = &stderr
+
+	// Create a simple command that writes to stdout
+	cmd := exec.Command("echo", "hello")
+	cmds := []*exec.Cmd{cmd}
+
+	err := pb.runCommands(context.Background(), cmds)
+	if err != nil {
+		t.Fatalf("runCommands failed: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "hello") {
+		t.Errorf("expected stdout to contain 'hello', got %q", stdout.String())
+	}
+}
+
+// TestStdoutStderrDefaults verifies that nil Stdout/Stderr defaults work without error.
+func TestStdoutStderrDefaults(t *testing.T) {
+	pb := NewPlaybook()
+
+	if pb.Stdout != nil {
+		t.Error("Expected Stdout to default to nil")
+	}
+	if pb.Stderr != nil {
+		t.Error("Expected Stderr to default to nil")
+	}
+}
+
+// TestExtraEnv verifies that ExtraEnv entries are included in the command environment.
+func TestExtraEnv(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-extraenv")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.ExtraEnv = map[string]string{
+		"ANSIBLE_LOG_PATH":   "/tmp/ansible.log",
+		"ANSIBLE_ROLES_PATH": "/opt/roles",
+	}
+
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
+	if len(cmds) == 0 {
+		t.Fatal("expected at least one command")
+	}
+
+	// Simulate the env wiring that runCommands does
+	cmd := cmds[0]
+	cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
+	envVars, err := buildCustomEnvVars(&pb.Config)
+	if err != nil {
+		t.Fatalf("buildCustomEnvVars failed: %v", err)
+	}
+	cmd.Env = append(cmd.Env, envVars...)
+	for k, v := range pb.Config.ExtraEnv {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+
+	// Check that ExtraEnv entries are present
+	foundLog, foundRoles := false, false
+	for _, env := range cmd.Env {
+		if env == "ANSIBLE_LOG_PATH=/tmp/ansible.log" {
+			foundLog = true
+		}
+		if env == "ANSIBLE_ROLES_PATH=/opt/roles" {
+			foundRoles = true
+		}
+	}
+	if !foundLog {
+		t.Error("expected ANSIBLE_LOG_PATH=/tmp/ansible.log in cmd.Env")
+	}
+	if !foundRoles {
+		t.Error("expected ANSIBLE_ROLES_PATH=/opt/roles in cmd.Env")
+	}
+}
+
+// TestCommandStrings verifies that CommandStrings returns the expected command lines.
+func TestCommandStrings(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-cmdstrings")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+
+	cmds, err := pb.CommandStrings(context.Background())
+	if err != nil {
+		t.Fatalf("CommandStrings failed: %v", err)
+	}
+
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command string (version off), got %d", len(cmds))
+	}
+
+	// Should contain ansible-playbook
+	if !strings.Contains(cmds[0], "ansible-playbook") {
+		t.Errorf("expected command to contain 'ansible-playbook', got: %s", cmds[0])
+	}
+
+	// Should contain the inventory
+	if !strings.Contains(cmds[0], "--inventory") {
+		t.Errorf("expected command to contain '--inventory', got: %s", cmds[0])
+	}
+
+	// Should contain the playbook file
+	if !strings.Contains(cmds[0], playbookFile) {
+		t.Errorf("expected command to contain playbook file, got: %s", cmds[0])
+	}
+}
+
+// TestCommandStringsWithVersion verifies CommandStrings includes version command when enabled.
+func TestCommandStringsWithVersion(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-cmdstrings-ver")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.ShowVersion = true
+
+	cmds, err := pb.CommandStrings(context.Background())
+	if err != nil {
+		t.Fatalf("CommandStrings failed: %v", err)
+	}
+
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 command strings (version + playbook), got %d", len(cmds))
+	}
+
+	if !strings.Contains(cmds[0], "ansible") || strings.Contains(cmds[0], "ansible-playbook") {
+		t.Errorf("expected first command to be ansible version, got: %s", cmds[0])
+	}
+	if !strings.Contains(cmds[1], "ansible-playbook") {
+		t.Errorf("expected second command to be ansible-playbook, got: %s", cmds[1])
+	}
+}
+
+// TestCommandStringsNoPlaybooks verifies CommandStrings returns error when no playbooks specified.
+func TestCommandStringsNoPlaybooks(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+
+	_, err := pb.CommandStrings(context.Background())
+	if err == nil {
+		t.Fatal("expected error when no playbooks specified")
+	}
+	if !strings.Contains(err.Error(), "no playbooks specified") {
+		t.Errorf("expected 'no playbooks specified' error, got: %v", err)
+	}
+}
+
+// TestCallbackWhitelistDeprecatedAlias verifies that the deprecated CallbackWhitelist
+// field is forwarded to --callbacks-enabled when CallbacksEnabled is not set.
+func TestCallbackWhitelistDeprecatedAlias(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.CallbackWhitelist = "profile_tasks"
+	inv := getInventoryHost() + ","
+
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
+	args := strings.Join(cmd.Args, " ")
+
+	if !strings.Contains(args, "--callbacks-enabled profile_tasks") {
+		t.Errorf("expected --callbacks-enabled from deprecated CallbackWhitelist, got: %s", args)
+	}
+}
+
+// TestCallbacksEnabledTakesPrecedence verifies that CallbacksEnabled takes precedence
+// over the deprecated CallbackWhitelist.
+func TestCallbacksEnabledTakesPrecedence(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.CallbacksEnabled = "timer"
+	pb.Config.CallbackWhitelist = "profile_tasks"
+	inv := getInventoryHost() + ","
+
+	cmd := pb.ansibleCommand(context.Background(), []string{inv})
+	args := strings.Join(cmd.Args, " ")
+
+	if !strings.Contains(args, "--callbacks-enabled timer") {
+		t.Errorf("expected --callbacks-enabled timer, got: %s", args)
+	}
+	if strings.Contains(args, "profile_tasks") {
+		t.Errorf("CallbackWhitelist should not appear when CallbacksEnabled is set, got: %s", args)
 	}
 }

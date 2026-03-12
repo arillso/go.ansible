@@ -143,6 +143,9 @@ type Config struct {
 	GalaxyUpgrade                     bool
 
 	// Other options
+	CallbacksEnabled string
+	// Deprecated: CallbackWhitelist is replaced by CallbacksEnabled.
+	// If both are set, CallbacksEnabled takes precedence.
 	CallbackWhitelist string
 	PollInterval      int
 	GatherSubset      string
@@ -154,6 +157,13 @@ type Config struct {
 	// If set, the file must exist or Exec will return an error.
 	ConfigFile string
 
+	// ExtraEnv holds additional environment variables to pass to Ansible commands.
+	// Map keys are variable names and map values are their values.
+	ExtraEnv map[string]string
+
+	// ShowVersion prints ansible --version before running playbooks
+	ShowVersion bool
+
 	// Optional: directory for temporary files
 	TempDir string
 }
@@ -164,6 +174,8 @@ type Playbook struct {
 	Config      Config
 	Debug       bool      // Enables additional logging output
 	TraceOutput io.Writer // Output destination for trace/debug output (defaults to os.Stdout)
+	Stdout      io.Writer // Output destination for command stdout (defaults to os.Stdout)
+	Stderr      io.Writer // Output destination for command stderr (defaults to os.Stderr)
 	tempFiles   []string
 }
 
@@ -310,8 +322,10 @@ func (p *Playbook) cleanupTempFiles() {
 func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 	var cmds []*exec.Cmd
 
-	// Version command
-	cmds = append(cmds, p.versionCommand(ctx))
+	// Version command (optional)
+	if p.Config.ShowVersion {
+		cmds = append(cmds, p.versionCommand(ctx))
+	}
 
 	// Galaxy commands (if GalaxyFile is set)
 	if p.Config.GalaxyFile != "" {
@@ -336,6 +350,27 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 	return cmds, nil
 }
 
+// CommandStrings returns the command lines that would be executed, without running them.
+// This is useful for debugging, logging, or previewing the commands.
+// Note: this method resolves glob patterns in Config.Playbooks in place; subsequent
+// calls to Exec will see the already-resolved paths.
+func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
+	if err := p.resolvePlaybooks(); err != nil {
+		return nil, fmt.Errorf("failed to resolve playbooks: %w", err)
+	}
+
+	cmds, err := p.buildCommands(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build commands: %w", err)
+	}
+
+	result := make([]string, len(cmds))
+	for i, cmd := range cmds {
+		result[i] = strings.Join(cmd.Args, " ")
+	}
+	return result, nil
+}
+
 // runCommands executes the given commands sequentially.
 // The context is already embedded in each exec.Cmd via exec.CommandContext.
 func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
@@ -343,14 +378,25 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 	if err != nil {
 		return fmt.Errorf("failed to build environment: %w", err)
 	}
+	stdout := p.Stdout
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	stderr := p.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
 	for i, cmd := range cmds {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
 		cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
 		if !p.Config.NoColor {
 			cmd.Env = append(cmd.Env, "ANSIBLE_FORCE_COLOR=1")
 		}
 		cmd.Env = append(cmd.Env, envVars...)
+		for k, v := range p.Config.ExtraEnv {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
 		if p.Debug {
 			p.trace(cmd)
 		}
@@ -542,6 +588,11 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 		return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 	}
 
+	callbacksEnabled := p.Config.CallbacksEnabled
+	if callbacksEnabled == "" {
+		callbacksEnabled = p.Config.CallbackWhitelist
+	}
+
 	options := []argOption{
 		{flag: "--check", value: p.Config.Check},
 		{flag: "--diff", value: p.Config.Diff},
@@ -568,7 +619,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 		{flag: "--private-key", value: p.Config.PrivateKeyFile},
 		{flag: "--vault-id", value: p.Config.VaultID},
 		{flag: "--vault-password-file", value: p.Config.VaultPasswordFile},
-		{flag: "--callback-whitelist", value: p.Config.CallbackWhitelist},
+		{flag: "--callbacks-enabled", value: callbacksEnabled},
 		{flag: "--poll-interval", value: p.Config.PollInterval},
 		{flag: "--strategy", value: p.Config.StrategyPlugin},
 		{flag: "--max-fail-percentage", value: p.Config.MaxFailPercentage},
