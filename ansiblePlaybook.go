@@ -149,7 +149,7 @@ type Config struct {
 	GatherTimeout     int
 	StrategyPlugin    string
 	MaxFailPercentage int
-	AnyErrorsFatal bool
+	AnyErrorsFatal    bool
 	// ConfigFile is the path to an Ansible configuration file.
 	// If set, the file must exist or Exec will return an error.
 	ConfigFile string
@@ -328,8 +328,10 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 		}
 	}
 
-	// Build a single Ansible command with all inventories
-	cmds = append(cmds, p.ansibleCommand(ctx, p.Config.Inventories))
+	// Build a single Ansible command with all inventories (only if at least one is configured)
+	if len(p.Config.Inventories) > 0 {
+		cmds = append(cmds, p.ansibleCommand(ctx, p.Config.Inventories))
+	}
 
 	return cmds, nil
 }
