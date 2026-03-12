@@ -1,3 +1,3 @@
 module github.com/arillso/go.ansible
 
-go 1.26.0
+go 1.26.1

@@ -19,7 +19,67 @@ const (
 
 	// maxVerboseLevel is the maximum verbosity level supported by Ansible (-vvvv).
 	maxVerboseLevel = 4
+
+	// Ansible exit codes.
+	ExitCodeSuccess     = 0
+	ExitCodeError       = 1
+	ExitCodeHostFailed  = 2
+	ExitCodeUnreachable = 3
+	ExitCodeParserError = 4
+	ExitCodeUserAbort   = 99
+	ExitCodeUnexpected  = 250
 )
+
+// AnsibleError represents an error from an Ansible command execution
+// with a structured exit code.
+type AnsibleError struct {
+	// ExitCode is the numeric exit code returned by the Ansible process.
+	ExitCode int
+	// Command is the name of the command that failed (e.g. "ansible-playbook").
+	Command string
+	// Message is a human-readable description of the error.
+	Message string
+	// Err is the underlying error from exec.Cmd.Run.
+	Err error
+}
+
+func (e *AnsibleError) Error() string {
+	return fmt.Sprintf("%s: %s (exit code %d)", e.Command, e.Message, e.ExitCode)
+}
+
+func (e *AnsibleError) Unwrap() error {
+	return e.Err
+}
+
+// ansibleExitCodeMessage maps Ansible exit codes to human-readable descriptions.
+var ansibleExitCodeMessage = map[int]string{
+	ExitCodeError:       "general error",
+	ExitCodeHostFailed:  "one or more hosts failed",
+	ExitCodeUnreachable: "one or more hosts unreachable",
+	ExitCodeParserError: "parser error",
+	ExitCodeUserAbort:   "user interrupted execution",
+	ExitCodeUnexpected:  "unexpected error",
+}
+
+// newAnsibleError creates an AnsibleError from an exec.ExitError.
+// For non-Ansible commands or non-exit errors it returns nil.
+func newAnsibleError(cmdName string, err error) *AnsibleError {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return nil
+	}
+	code := exitErr.ExitCode()
+	msg, ok := ansibleExitCodeMessage[code]
+	if !ok {
+		msg = "unknown error"
+	}
+	return &AnsibleError{
+		ExitCode: code,
+		Command:  cmdName,
+		Message:  msg,
+		Err:      err,
+	}
+}
 
 // Config contains configuration options for running Ansible playbooks.
 type Config struct {
@@ -272,7 +332,10 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 // runCommands executes the given commands sequentially.
 // The context is already embedded in each exec.Cmd via exec.CommandContext.
 func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
-	envVars := buildCustomEnvVars(&p.Config)
+	envVars, err := buildCustomEnvVars(&p.Config)
+	if err != nil {
+		return fmt.Errorf("failed to build environment: %w", err)
+	}
 	for i, cmd := range cmds {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -286,6 +349,9 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 		}
 		if err := cmd.Run(); err != nil {
 			cmdName := filepath.Base(cmd.Path)
+			if ae := newAnsibleError(cmdName, err); ae != nil {
+				return ae
+			}
 			return fmt.Errorf("error executing %s (command %d/%d): %w", cmdName, i+1, len(cmds), err)
 		}
 	}
@@ -305,12 +371,17 @@ func validateInventory(inv string) error {
 }
 
 // buildCustomEnvVars constructs additional environment variables for Ansible.
-func buildCustomEnvVars(cfg *Config) []string {
+// It returns an error if ConfigFile is set but does not exist.
+func buildCustomEnvVars(cfg *Config) ([]string, error) {
 	var env []string
 	if cfg.ConfigFile != "" {
-		if _, err := os.Stat(cfg.ConfigFile); err == nil {
-			env = append(env, "ANSIBLE_CONFIG="+cfg.ConfigFile)
+		if _, err := os.Stat(cfg.ConfigFile); err != nil {
+			return nil, fmt.Errorf("config file not found: %s", cfg.ConfigFile)
 		}
+		env = append(env, "ANSIBLE_CONFIG="+cfg.ConfigFile)
+	}
+	if cfg.FactPath != "" {
+		env = append(env, "ANSIBLE_FACT_PATH="+cfg.FactPath)
 	}
 	if cfg.FactCaching != "" {
 		env = append(env, "ANSIBLE_FACT_CACHING="+cfg.FactCaching)
@@ -318,7 +389,7 @@ func buildCustomEnvVars(cfg *Config) []string {
 	if cfg.FactCachingTimeout > 0 {
 		env = append(env, "ANSIBLE_FACT_CACHING_TIMEOUT="+strconv.Itoa(cfg.FactCachingTimeout))
 	}
-	return env
+	return env, nil
 }
 
 // argOption represents a single command-line flag option.
@@ -377,7 +448,7 @@ func appendExtraVars(args []string, extraVars []string) []string {
 
 // versionCommand creates the command to display the Ansible version.
 func (p *Playbook) versionCommand(ctx context.Context) *exec.Cmd {
-	return exec.CommandContext(ctx, "ansible", "--version")
+	return exec.CommandContext(ctx, "ansible", "--version") //nolint:gosec // command args are not user-controlled
 }
 
 // buildGalaxyCommand constructs a galaxy command using a base command and given options.
@@ -389,7 +460,7 @@ func (p *Playbook) buildGalaxyCommand(ctx context.Context, base []string, opts [
 		args = applyOption(args, opt)
 	}
 	args = addVerbose(args, p.Config.Verbose)
-	return exec.CommandContext(ctx, "ansible-galaxy", args...)
+	return exec.CommandContext(ctx, "ansible-galaxy", args...) //nolint:gosec // command args are built from validated config
 }
 
 // commonGalaxyOptions returns a fresh slice of options shared by both role and collection install commands.
@@ -456,7 +527,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 		}
 		args = append(args, flag)
 		args = append(args, p.Config.Playbooks...)
-		return exec.CommandContext(ctx, "ansible-playbook", args...)
+		return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // command args are built from validated config
 	}
 
 	options := []argOption{
@@ -504,13 +575,33 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventory string) *exec.C
 	args = appendExtraVars(args, p.Config.ExtraVars)
 	args = addVerbose(args, p.Config.Verbose)
 	args = append(args, p.Config.Playbooks...)
-	return exec.CommandContext(ctx, "ansible-playbook", args...)
+	return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // command args are built from validated config
+}
+
+// sensitiveFlags lists command-line flags whose values should be masked in trace output.
+var sensitiveFlags = map[string]bool{
+	"--extra-vars":          true,
+	"--vault-password-file": true,
+	"--private-key":         true,
+	"--api-key":             true,
 }
 
 // trace prints the full command line to standard output.
-// Warning: This may expose sensitive data such as extra-vars containing passwords or tokens.
+// Values of sensitive flags (e.g. --extra-vars, --vault-password-file) are masked.
 func (p *Playbook) trace(cmd *exec.Cmd) {
-	fmt.Printf("$ %s\n", strings.Join(cmd.Args, " "))
+	fmt.Printf("$ %s\n", strings.Join(maskSensitiveArgs(cmd.Args), " "))
+}
+
+// maskSensitiveArgs returns a copy of args with values of sensitive flags replaced by "******".
+func maskSensitiveArgs(args []string) []string {
+	masked := make([]string, len(args))
+	copy(masked, args)
+	for i := 0; i < len(masked)-1; i++ {
+		if sensitiveFlags[masked[i]] {
+			masked[i+1] = "******"
+		}
+	}
+	return masked
 }
 
 // isValidSSHKey validates that the content is in proper PEM format for SSH keys.

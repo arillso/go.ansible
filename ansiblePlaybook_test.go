@@ -4,9 +4,11 @@
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -239,7 +241,10 @@ func TestBuildCustomEnvVars(t *testing.T) {
 	cfg.FactCaching = "jsonfile"
 	cfg.FactCachingTimeout = 60
 
-	envVars := buildCustomEnvVars(&cfg)
+	envVars, err := buildCustomEnvVars(&cfg)
+	if err != nil {
+		t.Fatalf("buildCustomEnvVars failed: %v", err)
+	}
 	var foundConfig, foundFactCaching, foundFactCachingTimeout bool
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "ANSIBLE_CONFIG=") {
@@ -942,5 +947,1032 @@ func TestExecNonExistentGalaxyFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "galaxy file not found") {
 		t.Errorf("expected 'galaxy file not found' error, got: %v", err)
+	}
+}
+
+// TestBuildCustomEnvVarsConfigFileNotFound verifies error for missing config file.
+func TestBuildCustomEnvVarsConfigFileNotFound(t *testing.T) {
+	cfg := Config{
+		ConfigFile: "/nonexistent/ansible.cfg",
+	}
+	_, err := buildCustomEnvVars(&cfg)
+	if err == nil {
+		t.Fatal("expected error for non-existent config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "config file not found") {
+		t.Errorf("expected 'config file not found' error, got: %v", err)
+	}
+}
+
+// TestBuildCustomEnvVarsNoConfigFile verifies no error when ConfigFile is empty.
+func TestBuildCustomEnvVarsNoConfigFile(t *testing.T) {
+	cfg := Config{}
+	envVars, err := buildCustomEnvVars(&cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(envVars) != 0 {
+		t.Errorf("expected no env vars, got %v", envVars)
+	}
+}
+
+// TestBuildCustomEnvVarsFactPath verifies that FactPath is set as ANSIBLE_FACT_PATH.
+func TestBuildCustomEnvVarsFactPath(t *testing.T) {
+	cfg := Config{
+		FactPath: "/custom/facts",
+	}
+	envVars, err := buildCustomEnvVars(&cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, env := range envVars {
+		if env == "ANSIBLE_FACT_PATH=/custom/facts" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ANSIBLE_FACT_PATH in env vars, got %v", envVars)
+	}
+}
+
+// TestBuildGalaxyCommand verifies that buildGalaxyCommand constructs
+// the command with base args, options, and verbose flag.
+func TestBuildGalaxyCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		base        []string
+		opts        []argOption
+		verbose     int
+		wantBinary  string
+		wantContain []string
+		wantAbsent  []string
+	}{
+		{
+			name:        "base args only",
+			base:        []string{"role", "install"},
+			opts:        nil,
+			verbose:     0,
+			wantBinary:  "ansible-galaxy",
+			wantContain: []string{"role", "install"},
+		},
+		{
+			name: "with string option",
+			base: []string{"role", "install"},
+			opts: []argOption{
+				{flag: "--server", value: "https://galaxy.example.com"},
+			},
+			verbose:     0,
+			wantContain: []string{"role", "install", "--server", "https://galaxy.example.com"},
+		},
+		{
+			name: "with bool option",
+			base: []string{"collection", "install"},
+			opts: []argOption{
+				{flag: "--force", value: true},
+			},
+			verbose:     0,
+			wantContain: []string{"collection", "install", "--force"},
+		},
+		{
+			name: "empty string option skipped",
+			base: []string{"role", "install"},
+			opts: []argOption{
+				{flag: "--server", value: ""},
+			},
+			verbose:     0,
+			wantContain: []string{"role", "install"},
+			wantAbsent:  []string{"--server"},
+		},
+		{
+			name:        "with verbose level",
+			base:        []string{"role", "install"},
+			opts:        nil,
+			verbose:     2,
+			wantContain: []string{"role", "install", "-vv"},
+		},
+		{
+			name: "multiple options with verbose",
+			base: []string{"collection", "install"},
+			opts: []argOption{
+				{flag: "--server", value: "https://galaxy.example.com"},
+				{flag: "--force", value: true},
+				{flag: "--timeout", value: 30},
+			},
+			verbose:     1,
+			wantContain: []string{"collection", "install", "--server", "https://galaxy.example.com", "--force", "--timeout", "30", "-v"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pb := NewPlaybook()
+			pb.Config.Verbose = tt.verbose
+			cmd := pb.buildGalaxyCommand(context.Background(), tt.base, tt.opts)
+
+			if !strings.Contains(cmd.Path, "ansible-galaxy") {
+				t.Errorf("expected binary to contain 'ansible-galaxy', got %s", cmd.Path)
+			}
+
+			args := cmd.Args[1:] // skip binary name
+			for _, want := range tt.wantContain {
+				found := false
+				for _, arg := range args {
+					if arg == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected arg %q in command args %v", want, args)
+				}
+			}
+
+			for _, absent := range tt.wantAbsent {
+				for _, arg := range args {
+					if arg == absent {
+						t.Errorf("unexpected arg %q in command args %v", absent, args)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestCommonGalaxyOptions verifies that commonGalaxyOptions returns
+// options reflecting the Config fields.
+func TestCommonGalaxyOptions(t *testing.T) {
+	t.Run("default config returns empty-valued options", func(t *testing.T) {
+		pb := NewPlaybook()
+		opts := pb.commonGalaxyOptions()
+
+		if len(opts) != 6 {
+			t.Fatalf("expected 6 common galaxy options, got %d", len(opts))
+		}
+
+		expectedFlags := []string{"--server", "--api-key", "--ignore-certs", "--timeout", "--force", "--force-with-deps"}
+		for i, expected := range expectedFlags {
+			if opts[i].flag != expected {
+				t.Errorf("option[%d] flag = %q, want %q", i, opts[i].flag, expected)
+			}
+		}
+	})
+
+	t.Run("populated config reflects values", func(t *testing.T) {
+		pb := NewPlaybook()
+		pb.Config.GalaxyAPIServerURL = "https://galaxy.example.com"
+		pb.Config.GalaxyAPIKey = "my-api-key"
+		pb.Config.GalaxyIgnoreCerts = true
+		pb.Config.GalaxyTimeout = 60
+		pb.Config.GalaxyForce = true
+		pb.Config.GalaxyForceWithDeps = true
+
+		opts := pb.commonGalaxyOptions()
+
+		// Build args from the options to verify they produce correct flags
+		var args []string
+		for _, opt := range opts {
+			args = applyOption(args, opt)
+		}
+
+		expectedArgs := []string{
+			"--server", "https://galaxy.example.com",
+			"--api-key", "my-api-key",
+			"--ignore-certs",
+			"--timeout", "60",
+			"--force",
+			"--force-with-deps",
+		}
+
+		if len(args) != len(expectedArgs) {
+			t.Fatalf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
+		}
+		for i, want := range expectedArgs {
+			if args[i] != want {
+				t.Errorf("arg[%d] = %q, want %q", i, args[i], want)
+			}
+		}
+	})
+}
+
+// TestGalaxyRoleCommand verifies the role install command construction.
+func TestGalaxyRoleCommand(t *testing.T) {
+	tests := []struct {
+		name             string
+		galaxyFile       string
+		requirementsFile string
+		rolesPath        string
+		noDeps           bool
+		verbose          int
+		wantContain      []string
+	}{
+		{
+			name:        "basic role install",
+			galaxyFile:  "requirements.yml",
+			wantContain: []string{"role", "install", "--role-file", "requirements.yml"},
+		},
+		{
+			name:             "requirements file overrides galaxy file",
+			galaxyFile:       "galaxy.yml",
+			requirementsFile: "custom-requirements.yml",
+			wantContain:      []string{"role", "install", "--role-file", "custom-requirements.yml"},
+		},
+		{
+			name:        "with roles path and no-deps",
+			galaxyFile:  "requirements.yml",
+			rolesPath:   "/opt/roles",
+			noDeps:      true,
+			wantContain: []string{"role", "install", "--role-file", "requirements.yml", "--roles-path", "/opt/roles", "--no-deps"},
+		},
+		{
+			name:        "with verbose",
+			galaxyFile:  "requirements.yml",
+			verbose:     3,
+			wantContain: []string{"role", "install", "--role-file", "requirements.yml", "-vvv"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pb := NewPlaybook()
+			pb.Config.GalaxyFile = tt.galaxyFile
+			pb.Config.GalaxyRequirementsFile = tt.requirementsFile
+			pb.Config.GalaxyRolesPath = tt.rolesPath
+			pb.Config.GalaxyNoDeps = tt.noDeps
+			pb.Config.Verbose = tt.verbose
+
+			cmd := pb.galaxyRoleCommand(context.Background())
+
+			if !strings.Contains(cmd.Path, "ansible-galaxy") {
+				t.Errorf("expected binary 'ansible-galaxy', got %s", cmd.Path)
+			}
+
+			args := cmd.Args[1:]
+			for _, want := range tt.wantContain {
+				found := false
+				for _, arg := range args {
+					if arg == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected arg %q in %v", want, args)
+				}
+			}
+		})
+	}
+}
+
+// TestGalaxyCollectionCommand verifies the collection install command construction.
+func TestGalaxyCollectionCommand(t *testing.T) {
+	tests := []struct {
+		name             string
+		galaxyFile       string
+		requirementsFile string
+		collectionsPath  string
+		pre              bool
+		upgrade          bool
+		keyring          string
+		disableGPG       bool
+		sigCount         int
+		sigStatusCodes   []string
+		signature        string
+		offline          bool
+		verbose          int
+		wantContain      []string
+	}{
+		{
+			name:        "basic collection install",
+			galaxyFile:  "requirements.yml",
+			wantContain: []string{"collection", "install", "--requirements-file", "requirements.yml"},
+		},
+		{
+			name:             "requirements file overrides galaxy file",
+			galaxyFile:       "galaxy.yml",
+			requirementsFile: "collections.yml",
+			wantContain:      []string{"collection", "install", "--requirements-file", "collections.yml"},
+		},
+		{
+			name:            "with collections path and pre",
+			galaxyFile:      "requirements.yml",
+			collectionsPath: "/opt/collections",
+			pre:             true,
+			wantContain:     []string{"collection", "install", "--requirements-file", "requirements.yml", "--collections-path", "/opt/collections", "--pre"},
+		},
+		{
+			name:        "with upgrade and offline",
+			galaxyFile:  "requirements.yml",
+			upgrade:     true,
+			offline:     true,
+			wantContain: []string{"collection", "install", "--upgrade", "--offline"},
+		},
+		{
+			name:       "with GPG options",
+			galaxyFile: "requirements.yml",
+			keyring:    "/path/to/keyring.gpg",
+			disableGPG: true,
+			sigCount:   2,
+			signature:  "my-sig",
+			wantContain: []string{
+				"collection", "install",
+				"--keyring", "/path/to/keyring.gpg",
+				"--disable-gpg-verify",
+				"--required-valid-signature-count", "2",
+				"--signature", "my-sig",
+			},
+		},
+		{
+			name:           "with signature status codes",
+			galaxyFile:     "requirements.yml",
+			sigStatusCodes: []string{"EXPKEYSIG", "REVKEYSIG"},
+			wantContain:    []string{"--ignore-signature-status-code", "EXPKEYSIG", "REVKEYSIG"},
+		},
+		{
+			name:        "with verbose",
+			galaxyFile:  "requirements.yml",
+			verbose:     4,
+			wantContain: []string{"collection", "install", "-vvvv"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pb := NewPlaybook()
+			pb.Config.GalaxyFile = tt.galaxyFile
+			pb.Config.GalaxyRequirementsFile = tt.requirementsFile
+			pb.Config.GalaxyCollectionsPath = tt.collectionsPath
+			pb.Config.GalaxyPre = tt.pre
+			pb.Config.GalaxyUpgrade = tt.upgrade
+			pb.Config.GalaxyKeyring = tt.keyring
+			pb.Config.GalaxyDisableGPGVerify = tt.disableGPG
+			pb.Config.GalaxyRequiredValidSignatureCount = tt.sigCount
+			pb.Config.GalaxyIgnoreSignatureStatusCodes = tt.sigStatusCodes
+			pb.Config.GalaxySignature = tt.signature
+			pb.Config.GalaxyOffline = tt.offline
+			pb.Config.Verbose = tt.verbose
+
+			cmd := pb.galaxyCollectionCommand(context.Background())
+
+			if !strings.Contains(cmd.Path, "ansible-galaxy") {
+				t.Errorf("expected binary 'ansible-galaxy', got %s", cmd.Path)
+			}
+
+			args := cmd.Args[1:]
+			for _, want := range tt.wantContain {
+				found := false
+				for _, arg := range args {
+					if arg == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected arg %q in %v", want, args)
+				}
+			}
+		})
+	}
+}
+
+// TestTrace verifies that trace prints the command line to stdout.
+func TestTrace(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Debug = true
+
+	cmd := exec.Command("ansible-playbook", "--inventory", "localhost,", "site.yml")
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	pb.trace(cmd)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("failed to read pipe: %v", err)
+	}
+	output := buf.String()
+
+	expected := "$ ansible-playbook --inventory localhost, site.yml\n"
+	if output != expected {
+		t.Errorf("trace output = %q, want %q", output, expected)
+	}
+}
+
+// TestTraceMasksSensitiveArgs verifies that trace masks sensitive flag values.
+func TestTraceMasksSensitiveArgs(t *testing.T) {
+	pb := NewPlaybook()
+
+	cmd := exec.Command("ansible-playbook", "--inventory", "hosts.ini", "--extra-vars", "secret_password=hunter2", "-vv", "deploy.yml")
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	pb.trace(cmd)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("failed to read pipe: %v", err)
+	}
+	output := buf.String()
+
+	if strings.Contains(output, "hunter2") {
+		t.Errorf("trace output should not contain sensitive value, got: %s", output)
+	}
+	if !strings.Contains(output, "******") {
+		t.Errorf("trace output should contain masked value '******', got: %s", output)
+	}
+	// Non-sensitive args should still be present
+	for _, want := range []string{"ansible-playbook", "--inventory", "hosts.ini", "--extra-vars", "-vv", "deploy.yml"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("trace output missing %q, got: %s", want, output)
+		}
+	}
+}
+
+// TestMaskSensitiveArgs verifies maskSensitiveArgs directly.
+func TestMaskSensitiveArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "no sensitive flags",
+			args: []string{"ansible-playbook", "--inventory", "hosts.ini", "site.yml"},
+			want: []string{"ansible-playbook", "--inventory", "hosts.ini", "site.yml"},
+		},
+		{
+			name: "extra-vars masked",
+			args: []string{"ansible-playbook", "--extra-vars", "password=secret123", "site.yml"},
+			want: []string{"ansible-playbook", "--extra-vars", "******", "site.yml"},
+		},
+		{
+			name: "vault-password-file masked",
+			args: []string{"ansible-playbook", "--vault-password-file", "/tmp/vault.txt", "site.yml"},
+			want: []string{"ansible-playbook", "--vault-password-file", "******", "site.yml"},
+		},
+		{
+			name: "private-key masked",
+			args: []string{"ansible-playbook", "--private-key", "/home/user/.ssh/id_rsa", "site.yml"},
+			want: []string{"ansible-playbook", "--private-key", "******", "site.yml"},
+		},
+		{
+			name: "api-key masked",
+			args: []string{"ansible-galaxy", "--api-key", "tok_abc123", "role", "install"},
+			want: []string{"ansible-galaxy", "--api-key", "******", "role", "install"},
+		},
+		{
+			name: "multiple sensitive flags",
+			args: []string{"ansible-playbook", "--extra-vars", "pw=x", "--private-key", "/key", "site.yml"},
+			want: []string{"ansible-playbook", "--extra-vars", "******", "--private-key", "******", "site.yml"},
+		},
+		{
+			name: "sensitive flag at end without value",
+			args: []string{"ansible-playbook", "--extra-vars"},
+			want: []string{"ansible-playbook", "--extra-vars"},
+		},
+		{
+			name: "original args not mutated",
+			args: []string{"ansible-playbook", "--extra-vars", "secret"},
+			want: []string{"ansible-playbook", "--extra-vars", "******"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Keep a copy to check for mutation
+			original := make([]string, len(tt.args))
+			copy(original, tt.args)
+
+			got := maskSensitiveArgs(tt.args)
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d: %v", len(got), len(tt.want), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("arg[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+
+			// Verify original slice was not mutated
+			for i := range original {
+				if tt.args[i] != original[i] {
+					t.Errorf("original args mutated at [%d]: %q -> %q", i, original[i], tt.args[i])
+				}
+			}
+		})
+	}
+}
+
+// TestAnsibleErrorMessage verifies AnsibleError.Error() format.
+func TestAnsibleErrorMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		ae       AnsibleError
+		expected string
+	}{
+		{
+			name:     "general error",
+			ae:       AnsibleError{ExitCode: ExitCodeError, Command: "ansible-playbook", Message: "general error"},
+			expected: "ansible-playbook: general error (exit code 1)",
+		},
+		{
+			name:     "host failed",
+			ae:       AnsibleError{ExitCode: ExitCodeHostFailed, Command: "ansible-playbook", Message: "one or more hosts failed"},
+			expected: "ansible-playbook: one or more hosts failed (exit code 2)",
+		},
+		{
+			name:     "unreachable",
+			ae:       AnsibleError{ExitCode: ExitCodeUnreachable, Command: "ansible-playbook", Message: "one or more hosts unreachable"},
+			expected: "ansible-playbook: one or more hosts unreachable (exit code 3)",
+		},
+		{
+			name:     "parser error",
+			ae:       AnsibleError{ExitCode: ExitCodeParserError, Command: "ansible-playbook", Message: "parser error"},
+			expected: "ansible-playbook: parser error (exit code 4)",
+		},
+		{
+			name:     "user abort",
+			ae:       AnsibleError{ExitCode: ExitCodeUserAbort, Command: "ansible-playbook", Message: "user interrupted execution"},
+			expected: "ansible-playbook: user interrupted execution (exit code 99)",
+		},
+		{
+			name:     "unexpected error",
+			ae:       AnsibleError{ExitCode: ExitCodeUnexpected, Command: "ansible-playbook", Message: "unexpected error"},
+			expected: "ansible-playbook: unexpected error (exit code 250)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ae.Error(); got != tt.expected {
+				t.Errorf("Error() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestAnsibleErrorUnwrap verifies that AnsibleError.Unwrap() returns the underlying error.
+func TestAnsibleErrorUnwrap(t *testing.T) {
+	underlying := errors.New("underlying error")
+	ae := &AnsibleError{
+		ExitCode: ExitCodeError,
+		Command:  "ansible-playbook",
+		Message:  "general error",
+		Err:      underlying,
+	}
+
+	if !errors.Is(ae, underlying) {
+		t.Error("expected errors.Is to match underlying error")
+	}
+
+	var target *AnsibleError
+	if !errors.As(ae, &target) {
+		t.Error("expected errors.As to match *AnsibleError")
+	}
+	if target.ExitCode != ExitCodeError {
+		t.Errorf("ExitCode = %d, want %d", target.ExitCode, ExitCodeError)
+	}
+}
+
+// TestNewAnsibleError verifies newAnsibleError mapping for known and unknown exit codes.
+func TestNewAnsibleError(t *testing.T) {
+	tests := []struct {
+		name        string
+		exitCode    int
+		wantMessage string
+	}{
+		{"exit code 1", 1, "general error"},
+		{"exit code 2", 2, "one or more hosts failed"},
+		{"exit code 3", 3, "one or more hosts unreachable"},
+		{"exit code 4", 4, "parser error"},
+		{"exit code 99", 99, "user interrupted execution"},
+		{"exit code 250", 250, "unexpected error"},
+		{"exit code 42 unknown", 42, "unknown error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Run a command that exits with the desired exit code
+			cmd := exec.Command("sh", "-c", "exit "+strconv.Itoa(tt.exitCode)) //nolint:gosec // test code with controlled input
+			err := cmd.Run()
+			if err == nil {
+				t.Fatal("expected command to fail")
+			}
+
+			ae := newAnsibleError("ansible-playbook", err)
+			if ae == nil {
+				t.Fatal("expected AnsibleError, got nil")
+			}
+			if ae.ExitCode != tt.exitCode {
+				t.Errorf("ExitCode = %d, want %d", ae.ExitCode, tt.exitCode)
+			}
+			if ae.Message != tt.wantMessage {
+				t.Errorf("Message = %q, want %q", ae.Message, tt.wantMessage)
+			}
+			if ae.Command != "ansible-playbook" {
+				t.Errorf("Command = %q, want %q", ae.Command, "ansible-playbook")
+			}
+		})
+	}
+}
+
+// TestNewAnsibleErrorNonExitError verifies that newAnsibleError returns nil for non-exit errors.
+func TestNewAnsibleErrorNonExitError(t *testing.T) {
+	err := errors.New("not an exec.ExitError")
+	ae := newAnsibleError("ansible-playbook", err)
+	if ae != nil {
+		t.Errorf("expected nil for non-ExitError, got %v", ae)
+	}
+}
+
+// TestWriteTempFileInvalidDir verifies error when temp directory does not exist.
+func TestWriteTempFileInvalidDir(t *testing.T) {
+	_, err := writeTempFile("/nonexistent/dir/that/does/not/exist", "test-", "content", 0600)
+	if err == nil {
+		t.Fatal("expected error for non-existent temp directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not create temp file") {
+		t.Errorf("expected 'could not create temp file' error, got: %v", err)
+	}
+}
+
+// TestWriteTempFileReadOnlyDir verifies error when writing to a read-only directory.
+func TestWriteTempFileReadOnlyDir(t *testing.T) {
+	// Create a directory and make it read-only
+	roDir, err := os.MkdirTemp("", "test-readonly")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(roDir, 0o600) //nolint:gosec // restore permissions for cleanup
+		_ = os.RemoveAll(roDir)
+	}()
+
+	if err := os.Chmod(roDir, 0o400); err != nil {
+		t.Fatalf("Failed to change permissions: %v", err)
+	}
+
+	_, err = writeTempFile(roDir, "test-", "content", 0600)
+	if err == nil {
+		t.Fatal("expected error for read-only directory, got nil")
+	}
+}
+
+// TestWriteTempFileChmodError verifies error when chmod fails on the temp file.
+// This is tested by creating a file in a directory, then making the directory
+// non-searchable so that chmod on the file fails.
+func TestWriteTempFileChmodError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("test requires non-root user")
+	}
+
+	// Create a normal temp dir where we can create files
+	parentDir, err := os.MkdirTemp("", "test-chmod-parent")
+	if err != nil {
+		t.Fatalf("Failed to create parent temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(parentDir, 0o700) //nolint:gosec // restore permissions for cleanup
+		_ = os.RemoveAll(parentDir)
+	}()
+
+	// Create the temp file normally first to verify the path works
+	fname, err := writeTempFile(parentDir, "test-", "content", 0600)
+	if err != nil {
+		t.Fatalf("writeTempFile should succeed: %v", err)
+	}
+	_ = os.Remove(fname)
+
+	// Now create a subdirectory, create a file in it, then remove search permission
+	// so that chmod on the file will fail
+	subDir, err := os.MkdirTemp(parentDir, "sub")
+	if err != nil {
+		t.Fatalf("Failed to create sub dir: %v", err)
+	}
+	defer func() { _ = os.Chmod(subDir, 0o700) }() //nolint:gosec // restore permissions for cleanup
+
+	// Write a file, then remove directory execute permission to break chmod
+	fname2, err := writeTempFile(subDir, "test-", "content", 0600)
+	if err != nil {
+		t.Fatalf("writeTempFile should succeed initially: %v", err)
+	}
+	// Clean up the successful file
+	_ = os.Remove(fname2)
+
+	// Remove execute (search) permission on parent so new files can't be chmod'd
+	if err := os.Chmod(subDir, 0o200); err != nil {
+		t.Fatalf("Failed to change permissions: %v", err)
+	}
+
+	// This should fail at os.CreateTemp since the directory is not searchable
+	_, err = writeTempFile(subDir, "test-", "content", 0600)
+	if err == nil {
+		t.Fatal("expected error when directory permissions prevent file operations")
+	}
+}
+
+// TestWriteTempFileCRLFNormalization verifies that CRLF line endings are normalized to LF.
+func TestWriteTempFileCRLFNormalization(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-crlf")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	fname, err := writeTempFile(tempDir, "test-", "line1\r\nline2\r\n", 0600)
+	if err != nil {
+		t.Fatalf("writeTempFile failed: %v", err)
+	}
+	defer func() { _ = os.Remove(fname) }()
+
+	data, err := os.ReadFile(fname)
+	if err != nil {
+		t.Fatalf("Failed to read temp file: %v", err)
+	}
+
+	content := string(data)
+	if strings.Contains(content, "\r\n") {
+		t.Error("expected CRLF to be normalized to LF")
+	}
+	if !strings.HasSuffix(content, "\n") {
+		t.Error("expected trailing newline")
+	}
+}
+
+// TestWriteTempFileTrailingNewline verifies that a trailing newline is added if missing.
+func TestWriteTempFileTrailingNewline(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-trailing")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	fname, err := writeTempFile(tempDir, "test-", "no-newline", 0600)
+	if err != nil {
+		t.Fatalf("writeTempFile failed: %v", err)
+	}
+	defer func() { _ = os.Remove(fname) }()
+
+	data, err := os.ReadFile(fname)
+	if err != nil {
+		t.Fatalf("Failed to read temp file: %v", err)
+	}
+
+	if !strings.HasSuffix(string(data), "\n") {
+		t.Error("expected trailing newline to be added")
+	}
+}
+
+// TestWriteTempFilePermissions verifies that the file is created with correct permissions.
+func TestWriteTempFilePermissions(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-perms")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	fname, err := writeTempFile(tempDir, "test-", "content", 0600)
+	if err != nil {
+		t.Fatalf("writeTempFile failed: %v", err)
+	}
+	defer func() { _ = os.Remove(fname) }()
+
+	info, err := os.Stat(fname)
+	if err != nil {
+		t.Fatalf("Failed to stat temp file: %v", err)
+	}
+
+	perm := info.Mode().Perm()
+	if perm != 0o600 {
+		t.Errorf("expected permissions 0600, got %04o", perm)
+	}
+}
+
+// TestPrepareTempFilesInvalidDir verifies prepareTempFiles error with invalid temp dir.
+func TestPrepareTempFilesInvalidDir(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.TempDir = "/nonexistent/dir"
+	pb.Config.PrivateKey = "-----BEGIN RSA PRIVATE KEY-----\nDATA\n-----END RSA PRIVATE KEY-----"
+
+	err := pb.prepareTempFiles()
+	if err == nil {
+		t.Fatal("expected error for invalid temp dir, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not create private key file") {
+		t.Errorf("expected 'could not create private key file' error, got: %v", err)
+	}
+}
+
+// TestPrepareTempFilesInvalidVaultDir verifies prepareTempFiles error for vault with invalid temp dir.
+func TestPrepareTempFilesInvalidVaultDir(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.TempDir = "/nonexistent/dir"
+	pb.Config.VaultPassword = "secret"
+
+	err := pb.prepareTempFiles()
+	if err == nil {
+		t.Fatal("expected error for invalid temp dir, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not create vault password file") {
+		t.Errorf("expected 'could not create vault password file' error, got: %v", err)
+	}
+}
+
+// TestAnsibleCommandSyntaxCheck verifies that --syntax-check is added when SyntaxCheck is true.
+func TestAnsibleCommandSyntaxCheck(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.SyntaxCheck = true
+	inv := getInventoryHost() + ","
+	cmd := pb.ansibleCommand(context.Background(), inv)
+
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == "--syntax-check" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected --syntax-check in command arguments")
+	}
+}
+
+// TestAnsibleCommandListHosts verifies that --list-hosts is added when ListHosts is true.
+func TestAnsibleCommandListHosts(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.ListHosts = true
+	inv := getInventoryHost() + ","
+	cmd := pb.ansibleCommand(context.Background(), inv)
+
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == "--list-hosts" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected --list-hosts in command arguments")
+	}
+}
+
+// TestValidateInventoryExistingFile verifies that an existing inventory file passes validation.
+func TestValidateInventoryExistingFile(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-inventory")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	invFile := filepath.Join(tempDir, "hosts.ini")
+	if err := os.WriteFile(invFile, []byte("localhost"), 0o600); err != nil {
+		t.Fatalf("Failed to write inventory file: %v", err)
+	}
+
+	if err := validateInventory(invFile); err != nil {
+		t.Errorf("Expected valid inventory, got error: %v", err)
+	}
+}
+
+// TestBuildCommandsWithGalaxyFile verifies that galaxy commands are included when GalaxyFile exists.
+func TestBuildCommandsWithGalaxyFile(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-galaxy-commands")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	galaxyFile := filepath.Join(tempDir, "requirements.yml")
+	if err := os.WriteFile(galaxyFile, []byte("roles: []"), 0o600); err != nil {
+		t.Fatalf("Failed to write galaxy file: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.GalaxyFile = galaxyFile
+
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
+
+	// Expect: version + galaxy role + galaxy collection + playbook = 4 commands
+	if len(cmds) != 4 {
+		t.Errorf("Expected 4 commands (version+role+collection+playbook), got %d", len(cmds))
+	}
+}
+
+// TestBuildCommandsInvalidInventory verifies that buildCommands returns error for invalid inventory.
+func TestBuildCommandsInvalidInventory(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-invalid-inv")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{"/nonexistent/hosts"}
+
+	_, err = pb.buildCommands(context.Background())
+	if err == nil {
+		t.Fatal("expected error for invalid inventory, got nil")
+	}
+	if !strings.Contains(err.Error(), "inventory not found") {
+		t.Errorf("expected 'inventory not found' error, got: %v", err)
+	}
+}
+
+// TestExecWithInvalidConfigFile verifies that Exec returns error for non-existent config file.
+func TestExecWithInvalidConfigFile(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-exec-config")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.ConfigFile = "/nonexistent/ansible.cfg"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = pb.Exec(ctx)
+	if err == nil {
+		t.Fatal("expected error for non-existent config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "config file not found") {
+		t.Errorf("expected 'config file not found' error, got: %v", err)
+	}
+}
+
+// TestAnsibleExitCodeConstants verifies the exit code constants have correct values.
+func TestAnsibleExitCodeConstants(t *testing.T) {
+	tests := []struct {
+		name  string
+		code  int
+		value int
+	}{
+		{"Success", ExitCodeSuccess, 0},
+		{"Error", ExitCodeError, 1},
+		{"HostFailed", ExitCodeHostFailed, 2},
+		{"Unreachable", ExitCodeUnreachable, 3},
+		{"ParserError", ExitCodeParserError, 4},
+		{"UserAbort", ExitCodeUserAbort, 99},
+		{"Unexpected", ExitCodeUnexpected, 250},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.code != tt.value {
+				t.Errorf("%s = %d, want %d", tt.name, tt.code, tt.value)
+			}
+		})
 	}
 }
