@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-03-13
 
 ### Added
 
@@ -29,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING:** Replace `github.com/pkg/errors` with stdlib `errors` and `fmt.Errorf` with `%w` verb
 - **BREAKING:** Rename `CallbackWhitelist` to `CallbacksEnabled` (matches modern Ansible flag `--callbacks-enabled`)
-- **BREAKING:** Remove unused config fields: `ModuleName`, `InvalidateCache`, `Requirements`, `ModuleDefaults`, `MetadataExport`
 - **BREAKING:** `ConfigFile` validation now returns an error if the file doesn't exist (was silently ignored)
 - Consolidate multi-inventory into a single ansible-playbook command with multiple `--inventory` flags
 - Galaxy API key now passed via `ANSIBLE_GALAXY_TOKEN` environment variable instead of `--api-key` flag
@@ -42,8 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **BREAKING:** Config fields: `ModuleName`, `InvalidateCache`, `Requirements`, `ModuleDefaults`, `MetadataExport`
 - `github.com/pkg/errors` dependency
-- Config fields: `ModuleName`, `InvalidateCache`, `Requirements`, `ModuleDefaults`, `MetadataExport`
 
 ### Fixed
 
@@ -81,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Early detection of invalid SSH keys prevents potential SSH connection failures
 - Better validation reduces the risk of using malformed credentials
 
+[2.0.0]: https://github.com/arillso/go.ansible/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/arillso/go.ansible/compare/v1.1.0...v1.2.0
 
 ## [1.1.0] - 2025-10-25
