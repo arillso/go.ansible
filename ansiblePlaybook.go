@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -143,10 +144,7 @@ type Config struct {
 	GalaxyUpgrade                     bool
 
 	// Other options
-	CallbacksEnabled string
-	// Deprecated: CallbackWhitelist is replaced by CallbacksEnabled.
-	// If both are set, CallbacksEnabled takes precedence.
-	CallbackWhitelist string
+	CallbacksEnabled  string
 	PollInterval      int
 	GatherSubset      string
 	GatherTimeout     int
@@ -157,6 +155,10 @@ type Config struct {
 	// If set, the file must exist or Exec will return an error.
 	ConfigFile string
 
+	// OutputCallback sets the ANSIBLE_STDOUT_CALLBACK environment variable,
+	// e.g. "json" for machine-readable output or "yaml" for human-friendly output.
+	OutputCallback string
+
 	// ExtraEnv holds additional environment variables to pass to Ansible commands.
 	// Map keys are variable names and map values are their values.
 	ExtraEnv map[string]string
@@ -164,7 +166,10 @@ type Config struct {
 	// ShowVersion prints ansible --version before running playbooks
 	ShowVersion bool
 
-	// Optional: directory for temporary files
+	// TempDir is the directory for temporary files (SSH keys, vault passwords).
+	// In security-critical environments, set this to a tmpfs or ramfs mount to
+	// prevent secrets from persisting on disk if the process is killed (SIGKILL).
+	// Defaults to os.TempDir().
 	TempDir string
 }
 
@@ -347,19 +352,27 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 		cmds = append(cmds, p.ansibleCommand(ctx, p.Config.Inventories))
 	}
 
+	if len(cmds) == 0 {
+		return nil, errors.New("no commands to execute: configure at least one inventory, galaxy file, or enable --version")
+	}
+
 	return cmds, nil
 }
 
 // CommandStrings returns the command lines that would be executed, without running them.
 // This is useful for debugging, logging, or previewing the commands.
-// Note: this method resolves glob patterns in Config.Playbooks in place; subsequent
-// calls to Exec will see the already-resolved paths.
+// This method works on a shallow copy of the Playbook so it does not mutate Config.Playbooks.
 func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
-	if err := p.resolvePlaybooks(); err != nil {
+	// Work on a shallow copy so resolvePlaybooks does not mutate the caller's Config.
+	cp := *p
+	cp.Config.Playbooks = make([]string, len(p.Config.Playbooks))
+	copy(cp.Config.Playbooks, p.Config.Playbooks)
+
+	if err := cp.resolvePlaybooks(); err != nil {
 		return nil, fmt.Errorf("failed to resolve playbooks: %w", err)
 	}
 
-	cmds, err := p.buildCommands(ctx)
+	cmds, err := cp.buildCommands(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build commands: %w", err)
 	}
@@ -393,9 +406,17 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 		if !p.Config.NoColor {
 			cmd.Env = append(cmd.Env, "ANSIBLE_FORCE_COLOR=1")
 		}
+		if p.Config.GalaxyAPIKey != "" {
+			cmd.Env = append(cmd.Env, "ANSIBLE_GALAXY_TOKEN="+p.Config.GalaxyAPIKey)
+		}
 		cmd.Env = append(cmd.Env, envVars...)
-		for k, v := range p.Config.ExtraEnv {
-			cmd.Env = append(cmd.Env, k+"="+v)
+		envKeys := make([]string, 0, len(p.Config.ExtraEnv))
+		for k := range p.Config.ExtraEnv {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+		for _, k := range envKeys {
+			cmd.Env = append(cmd.Env, k+"="+p.Config.ExtraEnv[k])
 		}
 		if p.Debug {
 			p.trace(cmd)
@@ -443,6 +464,9 @@ func buildCustomEnvVars(cfg *Config) ([]string, error) {
 	}
 	if cfg.FactCachingTimeout > 0 {
 		env = append(env, "ANSIBLE_FACT_CACHING_TIMEOUT="+strconv.Itoa(cfg.FactCachingTimeout))
+	}
+	if cfg.OutputCallback != "" {
+		env = append(env, "ANSIBLE_STDOUT_CALLBACK="+cfg.OutputCallback)
 	}
 	return env, nil
 }
@@ -522,7 +546,6 @@ func (p *Playbook) buildGalaxyCommand(ctx context.Context, base []string, opts [
 func (p *Playbook) commonGalaxyOptions() []argOption {
 	return []argOption{
 		{flag: "--server", value: p.Config.GalaxyAPIServerURL},
-		{flag: "--api-key", value: p.Config.GalaxyAPIKey},
 		{flag: "--ignore-certs", value: p.Config.GalaxyIgnoreCerts},
 		{flag: "--timeout", value: p.Config.GalaxyTimeout},
 		{flag: "--force", value: p.Config.GalaxyForce},
@@ -588,11 +611,6 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 		return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 	}
 
-	callbacksEnabled := p.Config.CallbacksEnabled
-	if callbacksEnabled == "" {
-		callbacksEnabled = p.Config.CallbackWhitelist
-	}
-
 	options := []argOption{
 		{flag: "--check", value: p.Config.Check},
 		{flag: "--diff", value: p.Config.Diff},
@@ -619,7 +637,7 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 		{flag: "--private-key", value: p.Config.PrivateKeyFile},
 		{flag: "--vault-id", value: p.Config.VaultID},
 		{flag: "--vault-password-file", value: p.Config.VaultPasswordFile},
-		{flag: "--callbacks-enabled", value: callbacksEnabled},
+		{flag: "--callbacks-enabled", value: p.Config.CallbacksEnabled},
 		{flag: "--poll-interval", value: p.Config.PollInterval},
 		{flag: "--strategy", value: p.Config.StrategyPlugin},
 		{flag: "--max-fail-percentage", value: p.Config.MaxFailPercentage},

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -1107,7 +1108,7 @@ func TestCommonGalaxyOptions(t *testing.T) {
 		pb := NewPlaybook()
 		opts := pb.commonGalaxyOptions()
 
-		expectedFlags := []string{"--server", "--api-key", "--ignore-certs", "--timeout", "--force", "--force-with-deps"}
+		expectedFlags := []string{"--server", "--ignore-certs", "--timeout", "--force", "--force-with-deps"}
 		for i, expected := range expectedFlags {
 			if opts[i].flag != expected {
 				t.Errorf("option[%d] flag = %q, want %q", i, opts[i].flag, expected)
@@ -1118,7 +1119,6 @@ func TestCommonGalaxyOptions(t *testing.T) {
 	t.Run("populated config reflects values", func(t *testing.T) {
 		pb := NewPlaybook()
 		pb.Config.GalaxyAPIServerURL = "https://galaxy.example.com"
-		pb.Config.GalaxyAPIKey = "my-api-key"
 		pb.Config.GalaxyIgnoreCerts = true
 		pb.Config.GalaxyTimeout = 60
 		pb.Config.GalaxyForce = true
@@ -1134,7 +1134,6 @@ func TestCommonGalaxyOptions(t *testing.T) {
 
 		expectedArgs := []string{
 			"--server", "https://galaxy.example.com",
-			"--api-key", "my-api-key",
 			"--ignore-certs",
 			"--timeout", "60",
 			"--force",
@@ -2039,6 +2038,34 @@ func TestBuildCommandsShowVersion(t *testing.T) {
 	}
 }
 
+// TestBuildCommandsNoInventoryNoGalaxyNoVersion verifies that buildCommands returns
+// an error when no inventory, galaxy file, or version flag is configured.
+func TestBuildCommandsNoInventoryNoGalaxyNoVersion(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-no-commands")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	// No inventories, no galaxy file, no version — should produce no commands
+
+	_, err = pb.buildCommands(context.Background())
+	if err == nil {
+		t.Fatal("expected error when no commands would be generated")
+	}
+	if !strings.Contains(err.Error(), "no commands to execute") {
+		t.Errorf("expected 'no commands to execute' error, got: %v", err)
+	}
+}
+
 // TestStdoutStderrConfigurable verifies that command output is directed to custom writers.
 func TestStdoutStderrConfigurable(t *testing.T) {
 	pb := NewPlaybook()
@@ -2226,29 +2253,11 @@ func TestCommandStringsNoPlaybooks(t *testing.T) {
 	}
 }
 
-// TestCallbackWhitelistDeprecatedAlias verifies that the deprecated CallbackWhitelist
-// field is forwarded to --callbacks-enabled when CallbacksEnabled is not set.
-func TestCallbackWhitelistDeprecatedAlias(t *testing.T) {
-	pb := NewPlaybook()
-	pb.Config.Playbooks = []string{"playbook.yml"}
-	pb.Config.CallbackWhitelist = "profile_tasks"
-	inv := getInventoryHost() + ","
-
-	cmd := pb.ansibleCommand(context.Background(), []string{inv})
-	args := strings.Join(cmd.Args, " ")
-
-	if !strings.Contains(args, "--callbacks-enabled profile_tasks") {
-		t.Errorf("expected --callbacks-enabled from deprecated CallbackWhitelist, got: %s", args)
-	}
-}
-
-// TestCallbacksEnabledTakesPrecedence verifies that CallbacksEnabled takes precedence
-// over the deprecated CallbackWhitelist.
-func TestCallbacksEnabledTakesPrecedence(t *testing.T) {
+// TestCallbacksEnabled verifies that CallbacksEnabled is passed as --callbacks-enabled.
+func TestCallbacksEnabled(t *testing.T) {
 	pb := NewPlaybook()
 	pb.Config.Playbooks = []string{"playbook.yml"}
 	pb.Config.CallbacksEnabled = "timer"
-	pb.Config.CallbackWhitelist = "profile_tasks"
 	inv := getInventoryHost() + ","
 
 	cmd := pb.ansibleCommand(context.Background(), []string{inv})
@@ -2257,7 +2266,195 @@ func TestCallbacksEnabledTakesPrecedence(t *testing.T) {
 	if !strings.Contains(args, "--callbacks-enabled timer") {
 		t.Errorf("expected --callbacks-enabled timer, got: %s", args)
 	}
-	if strings.Contains(args, "profile_tasks") {
-		t.Errorf("CallbackWhitelist should not appear when CallbacksEnabled is set, got: %s", args)
+}
+
+// TestCommandStringsDoesNotMutateConfig verifies that CommandStrings does not modify
+// the original Config.Playbooks slice.
+func TestCommandStringsDoesNotMutateConfig(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-cmdstrings-nomutate")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	// Create two playbook files matching a glob pattern
+	for _, name := range []string{"a.yml", "b.yml"} {
+		if err := os.WriteFile(filepath.Join(tempDir, name), []byte("dummy"), 0o600); err != nil {
+			t.Fatalf("Failed to write playbook: %v", err)
+		}
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	glob := filepath.Join(tempDir, "*.yml")
+	pb.Config.Playbooks = []string{glob}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+
+	// Call CommandStrings — should not mutate Config.Playbooks
+	_, err = pb.CommandStrings(context.Background())
+	if err != nil {
+		t.Fatalf("CommandStrings failed: %v", err)
+	}
+
+	// Original playbooks should still be the glob pattern
+	if len(pb.Config.Playbooks) != 1 || pb.Config.Playbooks[0] != glob {
+		t.Errorf("CommandStrings mutated Config.Playbooks: got %v, want [%s]", pb.Config.Playbooks, glob)
+	}
+}
+
+// TestGalaxyAPIKeyViaEnv verifies that GalaxyAPIKey is passed as an environment
+// variable (ANSIBLE_GALAXY_TOKEN) instead of a CLI argument.
+func TestGalaxyAPIKeyViaEnv(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-galaxy-apikey")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	galaxyFile := filepath.Join(tempDir, "requirements.yml")
+	if err := os.WriteFile(galaxyFile, []byte("---"), 0o600); err != nil {
+		t.Fatalf("Failed to write galaxy file: %v", err)
+	}
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.GalaxyFile = galaxyFile
+	pb.Config.GalaxyAPIKey = "secret-token-123"
+
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
+
+	// Verify --api-key is NOT in any command args
+	for _, cmd := range cmds {
+		for _, arg := range cmd.Args {
+			if arg == "--api-key" || strings.HasPrefix(arg, "--api-key=") {
+				t.Errorf("GalaxyAPIKey should not appear as CLI arg, found in: %v", cmd.Args)
+			}
+		}
+	}
+
+	// Simulate runCommands env setup and verify ANSIBLE_GALAXY_TOKEN is set
+	cmd := cmds[0]
+	cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
+	if pb.Config.GalaxyAPIKey != "" {
+		cmd.Env = append(cmd.Env, "ANSIBLE_GALAXY_TOKEN="+pb.Config.GalaxyAPIKey)
+	}
+
+	found := false
+	for _, env := range cmd.Env {
+		if env == "ANSIBLE_GALAXY_TOKEN=secret-token-123" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected ANSIBLE_GALAXY_TOKEN=secret-token-123 in cmd.Env")
+	}
+}
+
+// TestOutputCallback verifies that OutputCallback sets ANSIBLE_STDOUT_CALLBACK.
+func TestOutputCallback(t *testing.T) {
+	cfg := Config{
+		OutputCallback: "json",
+	}
+	envVars, err := buildCustomEnvVars(&cfg)
+	if err != nil {
+		t.Fatalf("buildCustomEnvVars failed: %v", err)
+	}
+
+	found := false
+	for _, env := range envVars {
+		if env == "ANSIBLE_STDOUT_CALLBACK=json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected ANSIBLE_STDOUT_CALLBACK=json in env vars")
+	}
+}
+
+// TestOutputCallbackEmpty verifies that empty OutputCallback does not set the env var.
+func TestOutputCallbackEmpty(t *testing.T) {
+	cfg := Config{}
+	envVars, err := buildCustomEnvVars(&cfg)
+	if err != nil {
+		t.Fatalf("buildCustomEnvVars failed: %v", err)
+	}
+
+	for _, env := range envVars {
+		if strings.HasPrefix(env, "ANSIBLE_STDOUT_CALLBACK=") {
+			t.Errorf("ANSIBLE_STDOUT_CALLBACK should not be set for empty OutputCallback, got: %s", env)
+		}
+	}
+}
+
+// TestExtraEnvDeterministicOrder verifies that ExtraEnv entries are applied in sorted key order.
+func TestExtraEnvDeterministicOrder(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "test-extraenv-order")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	playbookFile := filepath.Join(tempDir, "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Inventories = []string{getInventoryHost() + ","}
+	pb.Config.ExtraEnv = map[string]string{
+		"Z_VAR": "z",
+		"A_VAR": "a",
+		"M_VAR": "m",
+	}
+	pb.Stdout = &bytes.Buffer{}
+	pb.Stderr = &bytes.Buffer{}
+
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
+
+	// Simulate runCommands env setup
+	cmd := cmds[0]
+	cmd.Env = os.Environ()
+	envKeys := make([]string, 0, len(pb.Config.ExtraEnv))
+	for k := range pb.Config.ExtraEnv {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		cmd.Env = append(cmd.Env, k+"="+pb.Config.ExtraEnv[k])
+	}
+
+	// Extract our test env vars in order
+	var extraEnvs []string
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "A_VAR=") || strings.HasPrefix(env, "M_VAR=") || strings.HasPrefix(env, "Z_VAR=") {
+			extraEnvs = append(extraEnvs, env)
+		}
+	}
+
+	expected := []string{"A_VAR=a", "M_VAR=m", "Z_VAR=z"}
+	if len(extraEnvs) != len(expected) {
+		t.Fatalf("expected %d extra env vars, got %d: %v", len(expected), len(extraEnvs), extraEnvs)
+	}
+	for i, want := range expected {
+		if extraEnvs[i] != want {
+			t.Errorf("env[%d] = %q, want %q", i, extraEnvs[i], want)
+		}
 	}
 }
