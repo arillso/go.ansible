@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -2303,7 +2302,8 @@ func TestCommandStringsDoesNotMutateConfig(t *testing.T) {
 }
 
 // TestGalaxyAPIKeyViaEnv verifies that GalaxyAPIKey is passed as an environment
-// variable (ANSIBLE_GALAXY_TOKEN) instead of a CLI argument.
+// variable (ANSIBLE_GALAXY_TOKEN) instead of a CLI argument, by exercising
+// runCommands with a real subprocess that prints its environment.
 func TestGalaxyAPIKeyViaEnv(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "test-galaxy-apikey")
 	if err != nil {
@@ -2342,22 +2342,26 @@ func TestGalaxyAPIKeyViaEnv(t *testing.T) {
 		}
 	}
 
-	// Simulate runCommands env setup and verify ANSIBLE_GALAXY_TOKEN is set
-	cmd := cmds[0]
-	cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
-	if pb.Config.GalaxyAPIKey != "" {
-		cmd.Env = append(cmd.Env, "ANSIBLE_GALAXY_TOKEN="+pb.Config.GalaxyAPIKey)
+	// Exercise runCommands with a real command that prints its env,
+	// so we test the actual production env-injection code path.
+	var stdout bytes.Buffer
+	pb.Stdout = &stdout
+	pb.Stderr = &bytes.Buffer{}
+	envCmd := exec.CommandContext(context.Background(), "env")
+	err = pb.runCommands(context.Background(), []*exec.Cmd{envCmd})
+	if err != nil {
+		t.Fatalf("runCommands failed: %v", err)
 	}
 
 	found := false
-	for _, env := range cmd.Env {
-		if env == "ANSIBLE_GALAXY_TOKEN=secret-token-123" {
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if line == "ANSIBLE_GALAXY_TOKEN=secret-token-123" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected ANSIBLE_GALAXY_TOKEN=secret-token-123 in cmd.Env")
+		t.Error("expected ANSIBLE_GALAXY_TOKEN=secret-token-123 in command environment")
 	}
 }
 
@@ -2398,57 +2402,34 @@ func TestOutputCallbackEmpty(t *testing.T) {
 	}
 }
 
-// TestExtraEnvDeterministicOrder verifies that ExtraEnv entries are applied in sorted key order.
+// TestExtraEnvDeterministicOrder verifies that ExtraEnv entries are applied in sorted
+// key order by exercising runCommands with a real subprocess.
 func TestExtraEnvDeterministicOrder(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test-extraenv-order")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
-	playbookFile := filepath.Join(tempDir, "test.yml")
-	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
-		t.Fatalf("Failed to write playbook: %v", err)
-	}
-
 	pb := NewPlaybook()
-	pb.Config.TempDir = tempDir
-	pb.Config.Playbooks = []string{playbookFile}
-	pb.Config.Inventories = []string{getInventoryHost() + ","}
 	pb.Config.ExtraEnv = map[string]string{
-		"Z_VAR": "z",
-		"A_VAR": "a",
-		"M_VAR": "m",
+		"Z_TEST_VAR": "z",
+		"A_TEST_VAR": "a",
+		"M_TEST_VAR": "m",
 	}
-	pb.Stdout = &bytes.Buffer{}
+	var stdout bytes.Buffer
+	pb.Stdout = &stdout
 	pb.Stderr = &bytes.Buffer{}
 
-	cmds, err := pb.buildCommands(context.Background())
+	envCmd := exec.CommandContext(context.Background(), "env")
+	err := pb.runCommands(context.Background(), []*exec.Cmd{envCmd})
 	if err != nil {
-		t.Fatalf("buildCommands failed: %v", err)
+		t.Fatalf("runCommands failed: %v", err)
 	}
 
-	// Simulate runCommands env setup
-	cmd := cmds[0]
-	cmd.Env = os.Environ()
-	envKeys := make([]string, 0, len(pb.Config.ExtraEnv))
-	for k := range pb.Config.ExtraEnv {
-		envKeys = append(envKeys, k)
-	}
-	sort.Strings(envKeys)
-	for _, k := range envKeys {
-		cmd.Env = append(cmd.Env, k+"="+pb.Config.ExtraEnv[k])
-	}
-
-	// Extract our test env vars in order
+	// Extract our test env vars in order from the actual subprocess output
 	var extraEnvs []string
-	for _, env := range cmd.Env {
-		if strings.HasPrefix(env, "A_VAR=") || strings.HasPrefix(env, "M_VAR=") || strings.HasPrefix(env, "Z_VAR=") {
-			extraEnvs = append(extraEnvs, env)
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if strings.HasPrefix(line, "A_TEST_VAR=") || strings.HasPrefix(line, "M_TEST_VAR=") || strings.HasPrefix(line, "Z_TEST_VAR=") {
+			extraEnvs = append(extraEnvs, line)
 		}
 	}
 
-	expected := []string{"A_VAR=a", "M_VAR=m", "Z_VAR=z"}
+	expected := []string{"A_TEST_VAR=a", "M_TEST_VAR=m", "Z_TEST_VAR=z"}
 	if len(extraEnvs) != len(expected) {
 		t.Fatalf("expected %d extra env vars, got %d: %v", len(expected), len(extraEnvs), extraEnvs)
 	}

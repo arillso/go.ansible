@@ -161,6 +161,8 @@ type Config struct {
 
 	// ExtraEnv holds additional environment variables to pass to Ansible commands.
 	// Map keys are variable names and map values are their values.
+	// Entries are applied in sorted key order after all other environment variables,
+	// so they can override built-in variables such as ANSIBLE_GALAXY_TOKEN (from GalaxyAPIKey).
 	ExtraEnv map[string]string
 
 	// ShowVersion prints ansible --version before running playbooks
