@@ -7,15 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `AnsibleError` structured error type with exit code mapping and `Unwrap()` support
+- `CommandStrings()` method for previewing commands without executing them
+- `OutputCallback` config field to set `ANSIBLE_STDOUT_CALLBACK` (e.g. `"json"`, `"yaml"`)
+- `ExtraEnv` config field for passing additional environment variables to Ansible commands
+- `ShowVersion` config flag — version display is now opt-in instead of always running
+- Configurable `TraceOutput`, `Stdout`, and `Stderr` `io.Writer` fields on `Playbook`
+- `ListTags` and `ListTasks` config flags for `--list-tags` / `--list-tasks` support
+- `GalaxyRolesPath` config field for `--roles-path` option
+- Sensitive flag masking in debug/trace output (e.g. `--extra-vars`, `--vault-password-file`)
+- `NoColor` now controls `ANSIBLE_FORCE_COLOR` (only set when `NoColor` is false)
+- Ansible exit code constants (`ExitCodeSuccess`, `ExitCodeError`, `ExitCodeHostFailed`, etc.)
+- `FactPath` now wired as `ANSIBLE_FACT_PATH` environment variable
+- `ModulePath` now wired as `--module-path` flag on ansible-playbook
+- GPG verification options (`--keyring`, `--disable-gpg-verify`, `--signature`, etc.) wired to collection install
+- `GalaxyRequirementsFile` now used by both role and collection install commands
+
 ### Changed
 
+- **BREAKING:** Replace `github.com/pkg/errors` with stdlib `errors` and `fmt.Errorf` with `%w` verb
+- **BREAKING:** Rename `CallbackWhitelist` to `CallbacksEnabled` (matches modern Ansible flag `--callbacks-enabled`)
+- **BREAKING:** Remove unused config fields: `ModuleName`, `InvalidateCache`, `Requirements`, `ModuleDefaults`, `MetadataExport`
+- **BREAKING:** `ConfigFile` validation now returns an error if the file doesn't exist (was silently ignored)
+- Consolidate multi-inventory into a single ansible-playbook command with multiple `--inventory` flags
+- Galaxy API key now passed via `ANSIBLE_GALAXY_TOKEN` environment variable instead of `--api-key` flag
+- `buildCustomEnvVars` now returns an error for validation
 - Align repository structure with Arillso standards
+- Deduplicate galaxy command options via `commonGalaxyOptions()`
+- Update Go version to 1.26.0
 - Update GitHub Actions dependencies for CI/CD workflows
+- Migrate CI and security workflows to shared reusable workflows
+
+### Removed
+
+- `github.com/pkg/errors` dependency
+- Config fields: `ModuleName`, `InvalidateCache`, `Requirements`, `ModuleDefaults`, `MetadataExport`
 
 ### Fixed
 
-- Resolve golangci-lint errcheck warnings for unchecked return values in cleanup operations
-- Add explicit error handling for `os.Remove()` and `os.RemoveAll()` in test files
+- Explicitly ignore `os.Remove` return values with `_` to satisfy errcheck linter
+- Use `WriteString` instead of `Write([]byte(...))` for temp file writing
 
 ## [1.2.0] - 2025-10-25
 
