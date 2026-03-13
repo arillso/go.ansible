@@ -25,7 +25,7 @@ package main
 import (
     "context"
     "log"
-    "github.com/arillso/go.ansible/v2"
+    "github.com/arillso/go.ansible/v2" // package name is "ansible"
 )
 
 func main() {
