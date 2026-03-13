@@ -1,20 +1,20 @@
 # GO Ansible
 
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?style=popout-square)](LICENSE)
-[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/arillso/go.ansible?style=popout-square)](https://pkg.go.dev/github.com/arillso/go.ansible?tab=doc)
+[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/arillso/go.ansible?style=popout-square)](https://pkg.go.dev/github.com/arillso/go.ansible/v2?tab=doc)
 [![GitHub release](https://img.shields.io/github/v/release/arillso/go.ansible?style=popout-square)](https://github.com/arillso/go.ansible/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/arillso/go.ansible)](https://goreportcard.com/report/github.com/arillso/go.ansible)
+[![Go Report Card](https://goreportcard.com/badge/github.com/arillso/go.ansible/v2)](https://goreportcard.com/report/github.com/arillso/go.ansible/v2)
 
 A Go module for programmatically executing Ansible playbooks with support for Galaxy integration, temporary file management, and flexible configuration.
 
-**Documentation:** https://pkg.go.dev/github.com/arillso/go.ansible
+**Documentation:** https://pkg.go.dev/github.com/arillso/go.ansible/v2
 
 ## Quick Start
 
 Install the module:
 
 ```bash
-go get github.com/arillso/go.ansible
+go get github.com/arillso/go.ansible/v2
 ```
 
 Basic usage:
@@ -25,7 +25,7 @@ package main
 import (
     "context"
     "log"
-    "github.com/arillso/go.ansible"
+    "github.com/arillso/go.ansible/v2"
 )
 
 func main() {
