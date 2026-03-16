@@ -15,7 +15,7 @@ permissions:
 
 jobs:
     codeql:
-        uses: arillso/.github/.github/workflows/security-codeql.yml@2026-03-09
+        uses: arillso/.github/.github/workflows/security-codeql.yml@2026-03-11
 
     trivy:
-        uses: arillso/.github/.github/workflows/security-trivy.yml@2026-03-09
+        uses: arillso/.github/.github/workflows/security-trivy.yml@2026-03-11
