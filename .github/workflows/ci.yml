@@ -21,16 +21,16 @@ permissions:
 
 jobs:
     go:
-        uses: arillso/.github/.github/workflows/ci-go.yml@2026-03-11
+        uses: arillso/.github/.github/workflows/ci-go.yml@2026-03-25
 
     lint:
-        uses: arillso/.github/.github/workflows/ci-lint.yml@2026-03-11
+        uses: arillso/.github/.github/workflows/ci-lint.yml@2026-03-25
 
     security-secrets:
-        uses: arillso/.github/.github/workflows/security-secrets.yml@2026-03-11
+        uses: arillso/.github/.github/workflows/security-secrets.yml@2026-03-25
 
     claude-review:
-        uses: arillso/.github/.github/workflows/ai-claude-review.yml@2026-03-11
+        uses: arillso/.github/.github/workflows/ai-claude-review.yml@2026-03-25
         if: github.event_name == 'pull_request' && github.event.action == 'opened'
         secrets:
             CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
