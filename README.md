@@ -56,7 +56,9 @@ pb := ansible.NewPlaybook()
 pb.Config.Playbooks = []string{"site.yml"}
 pb.Config.Inventories = []string{"production,"}
 pb.Config.VaultPassword = "s3cr3t"
-err := pb.Exec(context.Background())
+if err := pb.Exec(context.Background()); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Galaxy requirements
@@ -68,7 +70,9 @@ pb := ansible.NewPlaybook()
 pb.Config.GalaxyFile = "requirements.yml"
 pb.Config.Playbooks = []string{"site.yml"}
 pb.Config.Inventories = []string{"localhost,"}
-err := pb.Exec(context.Background())
+if err := pb.Exec(context.Background()); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Extra vars, limit and tags
@@ -80,7 +84,9 @@ pb.Config.Inventories = []string{"production,"}
 pb.Config.ExtraVars = []string{"env=staging", "version=1.2.3"}
 pb.Config.Limit = "web"
 pb.Config.Tags = "deploy"
-err := pb.Exec(context.Background())
+if err := pb.Exec(context.Background()); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Cancellation with context
@@ -94,7 +100,9 @@ defer cancel()
 pb := ansible.NewPlaybook()
 pb.Config.Playbooks = []string{"site.yml"}
 pb.Config.Inventories = []string{"localhost,"}
-err := pb.Exec(ctx) // returns a context error when cancelled
+if err := pb.Exec(ctx); err != nil { // returns a context error when cancelled
+    log.Fatal(err)
+}
 ```
 
 Preview the generated command without running Ansible via
