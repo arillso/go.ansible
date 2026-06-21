@@ -22,14 +22,27 @@ const (
 	// maxVerboseLevel is the maximum verbosity level supported by Ansible (-vvvv).
 	maxVerboseLevel = 4
 
-	// Ansible exit codes.
-	ExitCodeSuccess     = 0
-	ExitCodeError       = 1
-	ExitCodeHostFailed  = 2
+	// Ansible exit codes mirror the codes returned by the ansible-playbook
+	// CLI. The full set is exported so API consumers can compare against
+	// AnsibleError.ExitCode without redefining the magic numbers themselves.
+	//
+	// ExitCodeSuccess is part of this public set for completeness. The library
+	// itself returns nil (not an *AnsibleError carrying this code) on success,
+	// so it has no internal use, but it is intentionally exported so consumers
+	// have the complete, named set of Ansible exit codes.
+	ExitCodeSuccess = 0
+	// ExitCodeError is the generic failure code (errors during execution).
+	ExitCodeError = 1
+	// ExitCodeHostFailed indicates one or more hosts failed during the run.
+	ExitCodeHostFailed = 2
+	// ExitCodeUnreachable indicates one or more hosts were unreachable.
 	ExitCodeUnreachable = 3
+	// ExitCodeParserError indicates a playbook or inventory parser error.
 	ExitCodeParserError = 4
-	ExitCodeUserAbort   = 99
-	ExitCodeUnexpected  = 250
+	// ExitCodeUserAbort indicates the user interrupted execution.
+	ExitCodeUserAbort = 99
+	// ExitCodeUnexpected indicates an unexpected internal Ansible error.
+	ExitCodeUnexpected = 250
 )
 
 // AnsibleError represents an error from an Ansible command execution
@@ -49,10 +62,14 @@ type AnsibleError struct {
 	Err error
 }
 
+// Error returns a formatted description of the failed Ansible command,
+// including the exit code and the command's position in the sequence.
 func (e *AnsibleError) Error() string {
 	return fmt.Sprintf("%s: %s (exit code %d, command %d/%d)", e.Command, e.Message, e.ExitCode, e.CommandIndex, e.TotalCommands)
 }
 
+// Unwrap returns the underlying error from exec.Cmd.Run, allowing use with
+// errors.Is and errors.As.
 func (e *AnsibleError) Unwrap() error {
 	return e.Err
 }
@@ -90,67 +107,236 @@ func newAnsibleError(cmdName string, err error) *AnsibleError {
 // Config contains configuration options for running Ansible playbooks.
 type Config struct {
 	// General options
-	Become                                 bool
-	BecomeMethod, BecomeUser               string
-	User                                   string
-	PrivateKey, PrivateKeyFile             string
-	AskBecomePass, AskPass                 bool
-	Check, Diff, FlushCache, ForceHandlers bool
-	SyntaxCheck                            bool
-	ListHosts, ListTags, ListTasks         bool
-	Step                                   bool
-	Connection                             string
-	Timeout, Forks                         int
+
+	// Become enables privilege escalation (maps to ansible-playbook --become).
+	Become bool
+	// BecomeMethod selects the privilege escalation method such as "sudo" or
+	// "su" (maps to ansible-playbook --become-method).
+	BecomeMethod string
+	// BecomeUser is the user to become through privilege escalation
+	// (maps to ansible-playbook --become-user).
+	BecomeUser string
+	// User is the remote user to connect as (maps to ansible-playbook --user).
+	User string
+	// PrivateKey holds the SSH private key contents. When set, it is written to
+	// a temporary file whose path is passed via ansible-playbook --private-key.
+	PrivateKey string
+	// PrivateKeyFile is the path to the SSH private key file passed via
+	// ansible-playbook --private-key. It is populated automatically from
+	// PrivateKey when that is set.
+	PrivateKeyFile string
+	// AskBecomePass prompts for the privilege escalation password
+	// (maps to ansible-playbook --ask-become-pass).
+	AskBecomePass bool
+	// AskPass prompts for the connection password
+	// (maps to ansible-playbook --ask-pass).
+	AskPass bool
+	// Check runs in check (dry-run) mode without making changes
+	// (maps to ansible-playbook --check).
+	Check bool
+	// Diff shows the differences when changing files and templates
+	// (maps to ansible-playbook --diff).
+	Diff bool
+	// FlushCache clears the fact cache for every host in the inventory
+	// (maps to ansible-playbook --flush-cache).
+	FlushCache bool
+	// ForceHandlers runs handlers even if a task fails
+	// (maps to ansible-playbook --force-handlers).
+	ForceHandlers bool
+	// SyntaxCheck performs a playbook syntax check without executing it
+	// (maps to ansible-playbook --syntax-check).
+	SyntaxCheck bool
+	// ListHosts lists the hosts that would be targeted, without running tasks
+	// (maps to ansible-playbook --list-hosts).
+	ListHosts bool
+	// ListTags lists all available tags, without running tasks
+	// (maps to ansible-playbook --list-tags).
+	ListTags bool
+	// ListTasks lists all tasks that would be executed, without running them
+	// (maps to ansible-playbook --list-tasks).
+	ListTasks bool
+	// Step prompts for confirmation before running each task
+	// (maps to ansible-playbook --step).
+	Step bool
+	// Connection sets the connection type, e.g. "ssh" or "local"
+	// (maps to ansible-playbook --connection).
+	Connection string
+	// Timeout is the connection timeout in seconds
+	// (maps to ansible-playbook --timeout).
+	Timeout int
+	// Forks is the number of parallel processes to use
+	// (maps to ansible-playbook --forks). Defaults to defaultForks.
+	Forks int
 
 	// SSH options
-	SSHCommonArgs, SSHExtraArgs string
-	SCPExtraArgs, SFTPExtraArgs string
-	SSHTransferMethod           string
+
+	// SSHCommonArgs passes extra arguments to all SSH-based connection tools
+	// (maps to ansible-playbook --ssh-common-args).
+	SSHCommonArgs string
+	// SSHExtraArgs passes extra arguments to the ssh CLI
+	// (maps to ansible-playbook --ssh-extra-args).
+	SSHExtraArgs string
+	// SCPExtraArgs passes extra arguments to the scp CLI
+	// (maps to ansible-playbook --scp-extra-args).
+	SCPExtraArgs string
+	// SFTPExtraArgs passes extra arguments to the sftp CLI
+	// (maps to ansible-playbook --sftp-extra-args).
+	SFTPExtraArgs string
+	// SSHTransferMethod selects the file transfer method, e.g. "smart", "scp"
+	// or "sftp" (maps to ansible-playbook --ssh-transfer-method).
+	SSHTransferMethod string
 
 	// Playbook options
-	Inventories                 []string
-	Playbooks                   []string
-	Limit                       string
-	ExtraVars                   []string
-	StartAtTask, Tags, SkipTags string
-	ModulePath                  []string
-	Verbose                     int
-	NoColor                     bool
+
+	// Inventories is the list of inventory sources. Each entry is passed via a
+	// separate ansible-playbook --inventory flag. File-based entries must exist;
+	// inline inventories containing a comma are accepted as-is.
+	Inventories []string
+	// Playbooks is the list of playbooks to run. Entries may be file paths,
+	// glob patterns, or collection FQCN references (namespace.collection.name).
+	// They are appended as positional arguments to ansible-playbook.
+	Playbooks []string
+	// Limit restricts execution to a subset of hosts
+	// (maps to ansible-playbook --limit).
+	Limit string
+	// ExtraVars holds additional variables. Each entry is passed via a separate
+	// ansible-playbook --extra-vars flag (key=value or @file).
+	ExtraVars []string
+	// StartAtTask starts the playbook at the named task
+	// (maps to ansible-playbook --start-at-task).
+	StartAtTask string
+	// Tags runs only tasks tagged with these values
+	// (maps to ansible-playbook --tags).
+	Tags string
+	// SkipTags skips tasks tagged with these values
+	// (maps to ansible-playbook --skip-tags).
+	SkipTags string
+	// ModulePath lists additional directories to search for modules. Each entry
+	// is passed via a separate ansible-playbook --module-path flag.
+	ModulePath []string
+	// Verbose sets the verbosity level (1-4), rendered as -v through -vvvv on
+	// both ansible-playbook and ansible-galaxy commands.
+	Verbose int
+	// NoColor disables colored output (maps to ansible-playbook --no-color and
+	// suppresses the ANSIBLE_FORCE_COLOR environment variable).
+	NoColor bool
 
 	// Vault options
-	VaultID, VaultPassword, VaultPasswordFile string
-	AskVaultPass                              bool
+
+	// VaultID provides a vault identity (maps to ansible-playbook --vault-id).
+	VaultID string
+	// VaultPassword holds the vault password contents. When set, it is written
+	// to a temporary file whose path is passed via
+	// ansible-playbook --vault-password-file.
+	VaultPassword string
+	// VaultPasswordFile is the path to the vault password file passed via
+	// ansible-playbook --vault-password-file. It is populated automatically
+	// from VaultPassword when that is set.
+	VaultPasswordFile string
+	// AskVaultPass prompts for the vault password
+	// (maps to ansible-playbook --ask-vault-pass).
+	AskVaultPass bool
 
 	// Facts options
-	FactPath           string
-	FactCaching        string
+
+	// FactPath is the directory of additional local facts
+	// (sets the ANSIBLE_FACT_PATH environment variable).
+	FactPath string
+	// FactCaching selects the fact caching plugin, e.g. "jsonfile" or "redis"
+	// (sets the ANSIBLE_FACT_CACHING environment variable).
+	FactCaching string
+	// FactCachingTimeout is the fact cache expiration in seconds. When greater
+	// than zero it sets the ANSIBLE_FACT_CACHING_TIMEOUT environment variable.
 	FactCachingTimeout int
 
 	// Galaxy options
-	GalaxyFile                        string
-	GalaxyAPIKey, GalaxyAPIServerURL  string
-	GalaxyCollectionsPath             string
-	GalaxyDisableGPGVerify            bool
-	GalaxyForce, GalaxyForceWithDeps  bool
-	GalaxyNoDeps, GalaxyIgnoreCerts   bool
-	GalaxyIgnoreSignatureStatusCodes  []string
-	GalaxyKeyring                     string
-	GalaxyOffline, GalaxyPre          bool
+
+	// GalaxyFile is the requirements file for installing roles and collections.
+	// When set, ansible-galaxy role install and collection install commands are
+	// run before the playbook. It is used as the --role-file and
+	// --requirements-file value unless overridden by GalaxyRequirementsFile.
+	GalaxyFile string
+	// GalaxyAPIKey is the Galaxy API token. It is exported as the
+	// ANSIBLE_GALAXY_TOKEN environment variable rather than passed as a flag.
+	GalaxyAPIKey string
+	// GalaxyAPIServerURL is the Galaxy server URL
+	// (maps to ansible-galaxy --server).
+	GalaxyAPIServerURL string
+	// GalaxyCollectionsPath is the install destination for collections
+	// (maps to ansible-galaxy collection install --collections-path).
+	GalaxyCollectionsPath string
+	// GalaxyDisableGPGVerify disables GPG signature verification of collections
+	// (maps to ansible-galaxy collection install --disable-gpg-verify).
+	GalaxyDisableGPGVerify bool
+	// GalaxyForce forces overwriting of existing roles and collections
+	// (maps to ansible-galaxy --force).
+	GalaxyForce bool
+	// GalaxyForceWithDeps forces reinstallation including all dependencies
+	// (maps to ansible-galaxy --force-with-deps).
+	GalaxyForceWithDeps bool
+	// GalaxyNoDeps disables installation of role dependencies
+	// (maps to ansible-galaxy role install --no-deps).
+	GalaxyNoDeps bool
+	// GalaxyIgnoreCerts skips TLS certificate validation against the server
+	// (maps to ansible-galaxy --ignore-certs).
+	GalaxyIgnoreCerts bool
+	// GalaxyIgnoreSignatureStatusCodes lists gpg status codes to ignore during
+	// signature verification. Each entry is passed via a separate
+	// ansible-galaxy collection install --ignore-signature-status-code flag.
+	GalaxyIgnoreSignatureStatusCodes []string
+	// GalaxyKeyring is the keyring used for collection signature verification
+	// (maps to ansible-galaxy collection install --keyring).
+	GalaxyKeyring string
+	// GalaxyOffline installs collections without contacting the Galaxy server
+	// (maps to ansible-galaxy collection install --offline).
+	GalaxyOffline bool
+	// GalaxyPre allows installation of pre-release collections
+	// (maps to ansible-galaxy collection install --pre).
+	GalaxyPre bool
+	// GalaxyRequiredValidSignatureCount is the number of valid collection
+	// signatures required (maps to ansible-galaxy collection install
+	// --required-valid-signature-count).
 	GalaxyRequiredValidSignatureCount int
-	GalaxyRequirementsFile            string
-	GalaxyRolesPath                   string
-	GalaxySignature                   string
-	GalaxyTimeout                     int
-	GalaxyUpgrade                     bool
+	// GalaxyRequirementsFile overrides GalaxyFile as the requirements source for
+	// both role install (--role-file) and collection install
+	// (--requirements-file) when set.
+	GalaxyRequirementsFile string
+	// GalaxyRolesPath is the install destination for roles
+	// (maps to ansible-galaxy role install --roles-path).
+	GalaxyRolesPath string
+	// GalaxySignature is an additional collection signature source URL
+	// (maps to ansible-galaxy collection install --signature).
+	GalaxySignature string
+	// GalaxyTimeout is the Galaxy server request timeout in seconds
+	// (maps to ansible-galaxy --timeout).
+	GalaxyTimeout int
+	// GalaxyUpgrade upgrades installed collections to the latest version
+	// (maps to ansible-galaxy collection install --upgrade).
+	GalaxyUpgrade bool
 
 	// Other options
-	CallbacksEnabled  string
-	PollInterval      int
-	GatherSubset      string
-	GatherTimeout     int
-	StrategyPlugin    string
+
+	// CallbacksEnabled enables additional callback plugins
+	// (maps to ansible-playbook --callbacks-enabled).
+	CallbacksEnabled string
+	// PollInterval is the poll interval in seconds for async tasks
+	// (maps to ansible-playbook --poll-interval).
+	PollInterval int
+	// GatherSubset restricts the subset of facts gathered
+	// (maps to ansible-playbook --gather-subset).
+	GatherSubset string
+	// GatherTimeout is the timeout in seconds for fact gathering
+	// (maps to ansible-playbook --gather-timeout).
+	GatherTimeout int
+	// StrategyPlugin selects the execution strategy plugin, e.g. "linear" or
+	// "free" (maps to ansible-playbook --strategy).
+	StrategyPlugin string
+	// MaxFailPercentage aborts the run once this percentage of hosts has failed
+	// (maps to ansible-playbook --max-fail-percentage).
 	MaxFailPercentage int
-	AnyErrorsFatal    bool
+	// AnyErrorsFatal aborts the entire run if any host fails
+	// (maps to ansible-playbook --any-errors-fatal).
+	AnyErrorsFatal bool
 	// ConfigFile is the path to an Ansible configuration file.
 	// If set, the file must exist or Exec will return an error.
 	ConfigFile string
