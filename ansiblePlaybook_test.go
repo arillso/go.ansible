@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1622,56 +1623,29 @@ func TestWriteTempFileReadOnlyDir(t *testing.T) {
 	}
 }
 
-// TestWriteTempFileChmodError verifies error when chmod fails on the temp file.
-// This is tested by creating a file in a directory, then making the directory
-// non-searchable so that chmod on the file fails.
+// TestWriteTempFileChmodError verifies writeTempFile cleans up and returns a
+// wrapped error when setting permissions fails. chmodFile is injected to fail
+// so the path is hit deterministically (no root-skip, no OS-permission tricks).
+// chmodFile is package-global mutable state — this test must NOT run with
+// t.Parallel() (and neither may any other test touching chmodFile), or the
+// swap races. t.Cleanup restores it.
 func TestWriteTempFileChmodError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("test requires non-root user")
-	}
+	orig := chmodFile
+	chmodFile = func(string, os.FileMode) error { return errors.New("chmod boom") }
+	t.Cleanup(func() { chmodFile = orig })
 
-	// Create a normal temp dir where we can create files
-	parentDir, err := os.MkdirTemp("", "test-chmod-parent")
-	if err != nil {
-		t.Fatalf("Failed to create parent temp dir: %v", err)
-	}
-	defer func() {
-		_ = os.Chmod(parentDir, 0o700) //nolint:gosec // restore permissions for cleanup
-		_ = os.RemoveAll(parentDir)
-	}()
-
-	// Create the temp file normally first to verify the path works
-	fname, err := writeTempFile(parentDir, "test-", "content", 0600)
-	if err != nil {
-		t.Fatalf("writeTempFile should succeed: %v", err)
-	}
-	_ = os.Remove(fname)
-
-	// Now create a subdirectory, create a file in it, then remove search permission
-	// so that chmod on the file will fail
-	subDir, err := os.MkdirTemp(parentDir, "sub")
-	if err != nil {
-		t.Fatalf("Failed to create sub dir: %v", err)
-	}
-	defer func() { _ = os.Chmod(subDir, 0o700) }() //nolint:gosec // restore permissions for cleanup
-
-	// Write a file, then remove directory execute permission to break chmod
-	fname2, err := writeTempFile(subDir, "test-", "content", 0600)
-	if err != nil {
-		t.Fatalf("writeTempFile should succeed initially: %v", err)
-	}
-	// Clean up the successful file
-	_ = os.Remove(fname2)
-
-	// Remove execute (search) permission on parent so new files can't be chmod'd
-	if err := os.Chmod(subDir, 0o200); err != nil {
-		t.Fatalf("Failed to change permissions: %v", err)
-	}
-
-	// This should fail at os.CreateTemp since the directory is not searchable
-	_, err = writeTempFile(subDir, "test-", "content", 0600)
+	tempDir := t.TempDir()
+	_, err := writeTempFile(tempDir, "prefix-", "content", 0600)
 	if err == nil {
-		t.Fatal("expected error when directory permissions prevent file operations")
+		t.Fatal("expected a chmod error, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not set permissions") {
+		t.Errorf("expected set-permissions error, got: %v", err)
+	}
+	// The temp file must be removed on the failure path.
+	entries, _ := os.ReadDir(tempDir)
+	if len(entries) != 0 {
+		t.Errorf("expected temp file cleaned up, found %d entries", len(entries))
 	}
 }
 
@@ -2436,6 +2410,96 @@ func TestExtraEnvDeterministicOrder(t *testing.T) {
 	for i, want := range expected {
 		if extraEnvs[i] != want {
 			t.Errorf("env[%d] = %q, want %q", i, extraEnvs[i], want)
+		}
+	}
+}
+
+// TestWriteTempFileCreateError verifies writeTempFile returns an error when the
+// target directory does not exist (os.CreateTemp fails).
+func TestWriteTempFileCreateError(t *testing.T) {
+	nonexistent := filepath.Join(os.TempDir(), "go-ansible-does-not-exist", "nested")
+	_, err := writeTempFile(nonexistent, "prefix-", "content", 0600)
+	if err == nil {
+		t.Fatal("expected an error for a non-existent temp dir, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not create temp file") {
+		t.Errorf("expected create-temp-file error, got: %v", err)
+	}
+}
+
+// TestWriteTempFileInvalidSSHKey verifies writeTempFile rejects content that is
+// not a valid SSH key when the prefix marks it as a key file.
+func TestWriteTempFileInvalidSSHKey(t *testing.T) {
+	tempDir := t.TempDir()
+	for _, prefix := range []string{"ansible-key-", "ssh-key-"} {
+		_, err := writeTempFile(tempDir, prefix, "not a real key", 0600)
+		if err == nil {
+			t.Fatalf("prefix %q: expected invalid-SSH-key error, got nil", prefix)
+		}
+		if !strings.Contains(err.Error(), "invalid SSH key format") {
+			t.Errorf("prefix %q: expected SSH-key-format error, got: %v", prefix, err)
+		}
+	}
+}
+
+// TestWriteTempFileValidSSHKey verifies a well-formed PEM key passes the
+// key-format check and is written successfully.
+func TestWriteTempFileValidSSHKey(t *testing.T) {
+	tempDir := t.TempDir()
+	key := "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJDREVG\n-----END OPENSSH PRIVATE KEY-----"
+	file, err := writeTempFile(tempDir, "ssh-key-", key, 0600)
+	if err != nil {
+		t.Fatalf("valid SSH key should be written, got error: %v", err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("failed to read written key file: %v", err)
+	}
+	if !strings.Contains(string(data), "BEGIN OPENSSH PRIVATE KEY") {
+		t.Errorf("written key file missing PEM header, got: %q", string(data))
+	}
+}
+
+// TestPlaybookConcurrentSeparateInstances documents and verifies the concurrency
+// contract: a single Playbook is not safe for concurrent use, but separate
+// instances are. Each goroutine builds command strings on its own instance; run
+// with -race to catch any shared-state regression.
+func TestPlaybookConcurrentSeparateInstances(t *testing.T) {
+	const goroutines = 16
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			pb := NewPlaybook()
+			// A collection FQCN reference avoids the on-disk playbook lookup,
+			// so the test needs no real playbook files.
+			pb.Config.Playbooks = []string{"arillso.test.site"}
+			pb.Config.Inventories = []string{"localhost,"}
+			pb.Config.Tags = "only-" + strconv.Itoa(idx)
+			cmds, err := pb.CommandStrings(context.Background())
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			if len(cmds) == 0 {
+				errs[idx] = errors.New("instance " + strconv.Itoa(idx) + " produced no commands")
+				return
+			}
+			// Each instance must reflect only its own config — no cross-talk.
+			joined := strings.Join(cmds, " ")
+			if !strings.Contains(joined, "only-"+strconv.Itoa(idx)) {
+				errs[idx] = errors.New("instance " + strconv.Itoa(idx) + " missing its own tag in: " + joined)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
 		}
 	}
 }

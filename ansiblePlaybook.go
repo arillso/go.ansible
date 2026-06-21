@@ -959,10 +959,15 @@ func writeTempFile(tempDir, prefix, content string, perm os.FileMode) (string, e
 		return "", fmt.Errorf("could not close temp file: %w", err)
 	}
 
-	if err := os.Chmod(filename, perm); err != nil {
+	if err := chmodFile(filename, perm); err != nil {
 		_ = os.Remove(filename)
 		return "", fmt.Errorf("could not set permissions on temp file: %w", err)
 	}
 
 	return filename, nil
 }
+
+// chmodFile is os.Chmod indirected through a package var so the permission-set
+// failure path of writeTempFile can be exercised deterministically in tests.
+// Production always uses os.Chmod.
+var chmodFile = os.Chmod
