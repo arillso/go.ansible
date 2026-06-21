@@ -1626,10 +1626,13 @@ func TestWriteTempFileReadOnlyDir(t *testing.T) {
 // TestWriteTempFileChmodError verifies writeTempFile cleans up and returns a
 // wrapped error when setting permissions fails. chmodFile is injected to fail
 // so the path is hit deterministically (no root-skip, no OS-permission tricks).
+// chmodFile is package-global mutable state — this test must NOT run with
+// t.Parallel() (and neither may any other test touching chmodFile), or the
+// swap races. t.Cleanup restores it.
 func TestWriteTempFileChmodError(t *testing.T) {
 	orig := chmodFile
 	chmodFile = func(string, os.FileMode) error { return errors.New("chmod boom") }
-	defer func() { chmodFile = orig }()
+	t.Cleanup(func() { chmodFile = orig })
 
 	tempDir := t.TempDir()
 	_, err := writeTempFile(tempDir, "prefix-", "content", 0600)
@@ -2479,6 +2482,10 @@ func TestPlaybookConcurrentSeparateInstances(t *testing.T) {
 			cmds, err := pb.CommandStrings(context.Background())
 			if err != nil {
 				errs[idx] = err
+				return
+			}
+			if len(cmds) == 0 {
+				errs[idx] = errors.New("instance " + strconv.Itoa(idx) + " produced no commands")
 				return
 			}
 			// Each instance must reflect only its own config — no cross-talk.
