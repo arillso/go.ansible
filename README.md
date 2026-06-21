@@ -39,6 +39,75 @@ func main() {
 }
 ```
 
+## Examples
+
+Runnable examples live in [`example_test.go`](example_test.go) and on
+[pkg.go.dev](https://pkg.go.dev/github.com/arillso/go.ansible/v2#pkg-examples).
+A few common setups:
+
+### Vault password
+
+The password is written to a temporary file and passed via
+`--vault-password-file`. Set `Config.TempDir` to a tmpfs mount in
+security-critical environments so secrets never touch persistent disk.
+
+```go
+pb := ansible.NewPlaybook()
+pb.Config.Playbooks = []string{"site.yml"}
+pb.Config.Inventories = []string{"production,"}
+pb.Config.VaultPassword = "s3cr3t"
+if err := pb.Exec(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Galaxy requirements
+
+Roles and collections from a requirements file are installed before the run.
+
+```go
+pb := ansible.NewPlaybook()
+pb.Config.GalaxyFile = "requirements.yml"
+pb.Config.Playbooks = []string{"site.yml"}
+pb.Config.Inventories = []string{"localhost,"}
+if err := pb.Exec(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Extra vars, limit and tags
+
+```go
+pb := ansible.NewPlaybook()
+pb.Config.Playbooks = []string{"site.yml"}
+pb.Config.Inventories = []string{"production,"}
+pb.Config.ExtraVars = []string{"env=staging", "version=1.2.3"}
+pb.Config.Limit = "web"
+pb.Config.Tags = "deploy"
+if err := pb.Exec(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Cancellation with context
+
+Cancelling the context terminates the underlying `ansible-playbook` process —
+useful for honouring `SIGINT` or an overall deadline.
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+pb := ansible.NewPlaybook()
+pb.Config.Playbooks = []string{"site.yml"}
+pb.Config.Inventories = []string{"localhost,"}
+if err := pb.Exec(ctx); err != nil { // returns a context error when cancelled
+    log.Fatal(err)
+}
+```
+
+Preview the generated command without running Ansible via
+`pb.CommandStrings(ctx)`.
+
 ## Features
 
 - Automated playbook resolution with glob pattern support
