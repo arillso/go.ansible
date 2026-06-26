@@ -52,7 +52,7 @@ go.ansible/
     └── workflows/
         ├── pull-request.yml      # CI, lint, secret scan, Claude review on PRs
         ├── merge.yml             # CI plus secret scan on push to main
-        ├── nightly-security.yml  # Weekly CodeQL, Trivy, secret scan
+        ├── nightly-security.yml  # Daily CodeQL, Trivy, secret scan
         └── tag.yml               # Build, test, GitHub Release on SemVer tag
 ```
 
