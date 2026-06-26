@@ -1,0 +1,39 @@
+---
+# Lefthook git hooks — run `lefthook install` once after cloning.
+# Tools without a system binary are installed on-demand via `npx --yes`.
+# System binaries: yamllint, gitleaks (>= v8.18 for `git --staged` subcommand),
+# go (gofmt, go vet, go test), actionlint.
+#
+# Stack: Go library. Adapted from sbaerlocher/infrastructure
+# (prettier+yamllint+markdownlint+gitleaks+actionlint) with Go checks.
+
+pre-commit:
+    parallel: true
+    commands:
+        prettier:
+            glob: "*.{json,yml,yaml,md}"
+            run: npx --yes -- prettier --check {staged_files}
+        yamllint:
+            glob: "*.{yml,yaml}"
+            run: yamllint -c .yamllint.yml {staged_files}
+        markdownlint:
+            glob: "*.md"
+            run: npx --yes -- markdownlint-cli2 {staged_files}
+        gofmt-check:
+            glob: "*.go"
+            run: test -z "$(gofmt -l {staged_files})"
+        go-vet:
+            run: go vet ./...
+        actionlint:
+            glob: ".github/workflows/*.{yml,yaml}"
+            run: actionlint {staged_files}
+        gitleaks:
+            run: gitleaks git --staged --redact --no-banner
+
+pre-push:
+    parallel: true
+    commands:
+        go-test:
+            run: go test ./...
+        gitleaks-full:
+            run: gitleaks git --redact --no-banner

@@ -1,20 +1,20 @@
 ---
-name: Deployment
+name: Release - Go
+run-name: Release ${{ github.ref_name }}
 
-"on":
+on:
     push:
         tags:
-            - "v*.*.*"
-            - "[0-9]*.[0-9]*.[0-9]*"
+            - "[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+    group: release-${{ github.ref_name }}
+    cancel-in-progress: false
 
 permissions:
     contents: write
     id-token: write
     attestations: write
-
-concurrency:
-    group: deploy-${{ github.ref }}
-    cancel-in-progress: false
 
 jobs:
     prepare:
@@ -73,9 +73,9 @@ jobs:
 
             - name: Extract changelog
               id: changelog
+              env:
+                  VERSION: ${{ needs.prepare.outputs.version }}
               run: |
-                  VERSION="${{ needs.prepare.outputs.version }}"
-
                   if grep -q "## \[${VERSION}\]" CHANGELOG.md; then
                       awk '/^## \['"${VERSION}"'\]/{flag=1; next} /^## \[.*\]/ && flag {exit} flag' CHANGELOG.md > release_notes.md
                       echo "found=true" >> "$GITHUB_OUTPUT"

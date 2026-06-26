@@ -1,0 +1,28 @@
+---
+name: Nightly Security Scan
+run-name: |
+    Security Scan by @${{ github.actor }}
+
+on:
+    schedule:
+        - cron: "0 2 * * *" # Daily 02:00 UTC (public repo — Actions minutes are free)
+    workflow_dispatch:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+    security-events: write
+    actions: read
+
+jobs:
+    codeql:
+        uses: arillso/.github/.github/workflows/security-codeql.yml@2026-06-18
+
+    trivy:
+        uses: arillso/.github/.github/workflows/security-trivy.yml@2026-06-18
+
+    security-secrets:
+        uses: arillso/.github/.github/workflows/security-secrets.yml@2026-06-18
