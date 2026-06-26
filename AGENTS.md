@@ -44,15 +44,20 @@ The module is designed for embedding Ansible automation within Go applications, 
 go.ansible/
 ├── ansiblePlaybook.go       # Main playbook implementation
 ├── ansiblePlaybook_test.go  # Test suite
+├── example_test.go          # Runnable usage examples
 ├── go.mod                   # Go module dependencies
+├── lefthook.yml             # Local git hooks (gofmt, go vet, lint, gitleaks)
+├── REVIEW.md                # Code review guidelines (ai-claude-review workflow)
 └── .github/
     └── workflows/
-        ├── ci.yml           # Linting
-        ├── test.yml         # Tests
-        ├── deploy.yml       # Release builds
-        ├── codeql.yml       # Security scanning
-        └── security.yml     # Trivy scanning
+        ├── pull-request.yml      # CI, lint, secret scan, Claude review on PRs
+        ├── merge.yml             # CI plus secret scan on push to main
+        ├── nightly-security.yml  # Weekly CodeQL, Trivy, secret scan
+        └── tag.yml               # Build, test, GitHub Release on SemVer tag
 ```
+
+Event-focused workflows call reusables from `arillso/.github`. Install
+local hooks once with `lefthook install`; they run on commit and push.
 
 ## Do Not
 
