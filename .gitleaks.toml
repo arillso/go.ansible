@@ -8,5 +8,9 @@ useDefault = true
     paths = [
     '''megalinter-reports''',
     '''(.*?)gitleaks\.toml$''',
-    '''(.*?)_test\.go$''',
     '''(?i)(.*?)(png|jpeg|jpg|gif|doc|docx|pdf|bin|xls|xlsx|pyc|zip)$''']
+    # Table-driven tests for the private key parser use PEM envelopes whose
+    # body is the literal placeholder "TEST-KEY-DATA". Not real key material.
+    # Scoped to that marker so the rest of the test files stay scanned.
+    regexes = [
+    '''-----BEGIN [A-Z ]*PRIVATE KEY-----(\\r)?\\nTEST-KEY-DATA''']
