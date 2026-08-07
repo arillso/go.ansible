@@ -6,7 +6,7 @@ on:
     push:
         tags:
             - "v[0-9]+.[0-9]+.[0-9]+"
-            - "v[0-9]+.[0-9]+.[0-9]+-*"
+            - "v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z]*"
 
 concurrency:
     group: release-${{ github.ref_name }}
@@ -36,7 +36,7 @@ jobs:
                   VERSION="${VERSION#v}"
                   echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-                  if [[ "${VERSION}" =~ -[a-zA-Z] ]]; then
+                  if [[ "${VERSION}" =~ -[0-9A-Za-z] ]]; then
                       echo "is-prerelease=true" >> "$GITHUB_OUTPUT"
                   else
                       echo "is-prerelease=false" >> "$GITHUB_OUTPUT"
