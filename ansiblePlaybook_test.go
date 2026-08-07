@@ -1730,7 +1730,7 @@ func TestWriteTempFilePermissions(t *testing.T) {
 func TestPrepareTempFilesInvalidDir(t *testing.T) {
 	pb := NewPlaybook()
 	pb.Config.TempDir = "/nonexistent/dir"
-	pb.Config.PrivateKey = "-----BEGIN RSA PRIVATE KEY-----\nDATA\n-----END RSA PRIVATE KEY-----"
+	pb.Config.PrivateKey = "-----BEGIN RSA PRIVATE KEY-----\nTEST-KEY-DATA\n-----END RSA PRIVATE KEY-----"
 
 	err := pb.prepareTempFiles()
 	if err == nil {
@@ -2446,7 +2446,7 @@ func TestWriteTempFileInvalidSSHKey(t *testing.T) {
 // key-format check and is written successfully.
 func TestWriteTempFileValidSSHKey(t *testing.T) {
 	tempDir := t.TempDir()
-	key := "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJDREVG\n-----END OPENSSH PRIVATE KEY-----"
+	key := "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----"
 	file, err := writeTempFile(tempDir, "ssh-key-", key, 0600)
 	if err != nil {
 		t.Fatalf("valid SSH key should be written, got error: %v", err)
