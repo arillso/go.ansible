@@ -912,8 +912,11 @@ func TestExecContextCancellation(t *testing.T) {
 	cancel() // Cancel immediately
 
 	err = pb.Exec(ctx)
+	if errors.Is(err, exec.ErrNotFound) {
+		t.Skip("skipping context-cancellation check: ansible-playbook not installed")
+	}
 	if err == nil {
-		t.Skip("skipping context-cancellation check: ansible binary not available")
+		t.Fatal("expected context cancellation error, got nil")
 	}
 	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context") {
 		t.Errorf("expected context cancellation error, got: %v", err)
