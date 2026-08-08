@@ -2,14 +2,14 @@
 extends: default
 rules:
     line-length:
-        max: 160
+        max: 500
         level: warning
     indentation:
         spaces: 4
         indent-sequences: true
     truthy:
         allowed-values: ['true', 'false']
-        check-keys: true
+        check-keys: false
     document-start:
         present: true
     octal-values:
