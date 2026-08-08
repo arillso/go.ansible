@@ -94,3 +94,16 @@ jobs:
                   generate_release_notes: ${{ steps.changelog.outputs.found == 'false' }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Runs after `release` so the release exists before the SBOM is attached.
+    # A release is therefore visible without its SBOM for a short window; the
+    # SBOM is a compliance record, not a release gate.
+    sbom:
+        uses: arillso/.github/.github/workflows/security-sbom.yml@2026-08-08
+        needs: [prepare, release]
+        permissions:
+            contents: write
+        with:
+            artifact-type: go-binary
+            artifact-ref: .
+            attach-to-release: true
