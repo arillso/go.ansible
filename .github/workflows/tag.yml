@@ -100,7 +100,7 @@ jobs:
     # SBOM is a compliance record, not a release gate.
     sbom:
         uses: arillso/.github/.github/workflows/security-sbom.yml@2026-08-08
-        needs: [prepare, release]
+        needs: [release]
         permissions:
             contents: write
         with:
