@@ -9,7 +9,8 @@ GO Ansible is a Go module for programmatically executing Ansible playbooks. It p
 - Install Ansible Galaxy roles and collections
 - Build and execute ansible-playbook commands with custom options
 
-The module is designed for embedding Ansible automation within Go applications, particularly useful for infrastructure automation tools.
+The module is designed for embedding Ansible automation within Go applications,
+particularly useful for infrastructure automation tools.
 
 ## Conventions
 
@@ -40,7 +41,7 @@ The module is designed for embedding Ansible automation within Go applications, 
 
 ## Structure
 
-```
+```text
 go.ansible/
 ├── ansiblePlaybook.go       # Main playbook implementation
 ├── ansiblePlaybook_test.go  # Test suite

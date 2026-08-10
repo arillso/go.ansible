@@ -5,9 +5,10 @@
 [![GitHub release](https://img.shields.io/github/v/release/arillso/go.ansible?style=popout-square)](https://github.com/arillso/go.ansible/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/arillso/go.ansible/v2)](https://goreportcard.com/report/github.com/arillso/go.ansible/v2)
 
-A Go module for programmatically executing Ansible playbooks with support for Galaxy integration, temporary file management, and flexible configuration.
+A Go module for programmatically executing Ansible playbooks with support for
+Galaxy integration, temporary file management, and flexible configuration.
 
-**Documentation:** https://pkg.go.dev/github.com/arillso/go.ansible/v2
+**Documentation:** <https://pkg.go.dev/github.com/arillso/go.ansible/v2>
 
 ## Quick Start
 
