@@ -88,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Support for running playbooks from Ansible Collections using FQCN (Fully Qualified Collection Name) format
-- Collection playbooks can now be specified using the format `namespace.collection.playbook_name` without requiring local files
+- Collection playbooks can now be specified using the format
+  `namespace.collection.playbook_name` without requiring local files
 - `isCollectionPlaybook()` helper function to distinguish between local file paths and collection FQCNs
 - Comprehensive test coverage for collection playbook functionality (3 new test functions with 7+ test cases)
 - Automatic detection and handling of collection playbook references in `resolvePlaybooks()` function
@@ -194,6 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Contributors
 
 This release includes the first contributions from:
+
 - @dependabot-preview in [#1]
 - @sbaerlocher in [#2]
 - @dependabot in [#4]
