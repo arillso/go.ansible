@@ -99,7 +99,7 @@ jobs:
     # A release is therefore visible without its SBOM for a short window; the
     # SBOM is a compliance record, not a release gate.
     sbom:
-        uses: arillso/.github/.github/workflows/security-sbom.yml@2026-08-08
+        uses: arillso/.github/.github/workflows/security-sbom.yml@2026-08-09
         needs: [release]
         permissions:
             contents: write
