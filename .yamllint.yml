@@ -8,7 +8,7 @@ rules:
         spaces: 4
         indent-sequences: true
     truthy:
-        allowed-values: ['true', 'false']
+        allowed-values: ["true", "false"]
         check-keys: false
     document-start:
         present: true

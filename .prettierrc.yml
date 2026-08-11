@@ -1,0 +1,10 @@
+---
+# Prettier reads .editorconfig only when a Prettier config file exists, so this
+# file is what makes the 4-space YAML rule from .editorconfig and .yamllint.yml
+# actually apply to the pre-commit prettier job in lefthook.yml.
+overrides:
+    - files:
+          - "*.yml"
+          - "*.yaml"
+      options:
+          tabWidth: 4
