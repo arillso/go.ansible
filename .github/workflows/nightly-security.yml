@@ -19,12 +19,12 @@ permissions:
 
 jobs:
     codeql:
-        uses: arillso/.github/.github/workflows/security-code.yml@2026-08-19
+        uses: arillso/.github/.github/workflows/security-code.yml@2026-08-20
         with:
             languages: '["go"]'
 
     trivy:
-        uses: arillso/.github/.github/workflows/security-trivy.yml@2026-08-19
+        uses: arillso/.github/.github/workflows/security-trivy.yml@2026-08-20
 
     security-secrets:
-        uses: arillso/.github/.github/workflows/security-secrets.yml@2026-08-19
+        uses: arillso/.github/.github/workflows/security-secrets.yml@2026-08-20
