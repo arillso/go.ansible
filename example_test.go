@@ -56,7 +56,8 @@ func ExamplePlaybook_galaxy() {
 }
 
 // ExamplePlaybook_extraVars shows passing extra variables and limiting the run
-// to a subset of hosts and tags.
+// to a subset of hosts and tags. CommandStrings masks extra-vars values, so the
+// preview is safe to log.
 func ExamplePlaybook_extraVars() {
 	pb := ansible.NewPlaybook()
 	pb.Config.Playbooks = []string{"arillso.example.site"}
@@ -71,7 +72,7 @@ func ExamplePlaybook_extraVars() {
 		return
 	}
 	fmt.Println(cmds[0])
-	// Output: ansible-playbook --inventory production, --forks 5 --limit web --tags deploy --extra-vars env=staging --extra-vars version=1.2.3 arillso.example.site
+	// Output: ansible-playbook --inventory production, --forks 5 --limit web --tags deploy --extra-vars ****** --extra-vars ****** arillso.example.site
 }
 
 // ExamplePlaybook_context shows cancelling a run with a context. Cancelling the
