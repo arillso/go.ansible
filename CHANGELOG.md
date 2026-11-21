@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The playbook always runs, also without `Inventories`. Configs that set only `GalaxyFile`,
+  `GalaxyRequirementsFile` or `ShowVersion` without `Inventories` now also run the playbook
+  against the configured default inventory (ansible.cfg or `ANSIBLE_INVENTORY`)
+- `CommandStrings` masks sensitive values (`--extra-vars`, `--private-key`,
+  `--vault-password-file`) like the debug trace
+- Color is no longer forced when `Stdout` is a custom writer such as `bytes.Buffer`
+
 ### Fixed
 
 - `NoColor`, `StrategyPlugin`, `CallbacksEnabled`, `PollInterval`, `AnyErrorsFatal` and
