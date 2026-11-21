@@ -328,12 +328,14 @@ type Config struct {
 	// (sets the ANSIBLE_POLL_INTERVAL environment variable).
 	PollInterval int
 	// GatherSubset is not supported: ansible-playbook has no CLI flag or
-	// environment variable for it. Exec returns an error when it is set.
+	// environment variable for it. Exec and CommandStrings return an error
+	// when it is set.
 	//
 	// Deprecated: set gather_subset on the play instead.
 	GatherSubset string
 	// GatherTimeout is not supported: ansible-playbook has no CLI flag or
-	// environment variable for it. Exec returns an error when it is set.
+	// environment variable for it. Exec and CommandStrings return an error
+	// when it is set.
 	//
 	// Deprecated: set gather_timeout on the play instead.
 	GatherTimeout int
@@ -341,7 +343,8 @@ type Config struct {
 	// "free" (sets the ANSIBLE_STRATEGY environment variable).
 	StrategyPlugin string
 	// MaxFailPercentage is not supported: ansible-playbook has no CLI flag or
-	// environment variable for it. Exec returns an error when it is set.
+	// environment variable for it. Exec and CommandStrings return an error
+	// when it is set.
 	//
 	// Deprecated: set max_fail_percentage on the play instead.
 	MaxFailPercentage int
