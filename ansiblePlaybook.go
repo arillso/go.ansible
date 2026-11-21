@@ -635,8 +635,9 @@ func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 
 // commandEnv builds the environment shared by all commands of one run.
 func (p *Playbook) commandEnv(stdout io.Writer, envVars []string) []string {
-	env := make([]string, 0, len(os.Environ())+len(envVars)+len(p.Config.ExtraEnv)+3)
-	for _, kv := range os.Environ() {
+	inherited := os.Environ()
+	env := make([]string, 0, len(inherited)+len(envVars)+len(p.Config.ExtraEnv)+3)
+	for _, kv := range inherited {
 		// NoColor must win over an inherited ANSIBLE_FORCE_COLOR.
 		if p.Config.NoColor && strings.HasPrefix(kv, "ANSIBLE_FORCE_COLOR=") {
 			continue
@@ -693,8 +694,9 @@ func (p *Playbook) runCommands(ctx context.Context, cmds []*exec.Cmd) error {
 		if err := cmd.Run(); err != nil {
 			// A cancelled context kills the process; keep ctx.Err() in the
 			// chain so callers can match context.Canceled/DeadlineExceeded.
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				err = errors.Join(err, ctxErr)
+			// Start already returns ctx.Err() when ctx was done beforehand.
+			if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+				err = fmt.Errorf("%w: %w", ctxErr, err)
 			}
 			cmdName := filepath.Base(cmd.Path)
 			if ae := newAnsibleError(cmdName, err); ae != nil {
@@ -714,10 +716,18 @@ func validateInventory(inv string) error {
 	if strings.Contains(inv, ",") {
 		return nil
 	}
-	f, err := os.Open(inv) //nolint:gosec // path comes from trusted configuration
+	fi, err := os.Stat(inv)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("inventory not found: %s", inv)
 	}
+	if err != nil {
+		return fmt.Errorf("inventory not readable: %s: %w", inv, err)
+	}
+	// Opening a FIFO or device can block; only probe files and directories.
+	if !fi.Mode().IsRegular() && !fi.IsDir() {
+		return nil
+	}
+	f, err := os.Open(inv) //nolint:gosec // path comes from trusted configuration
 	if err != nil {
 		return fmt.Errorf("inventory not readable: %s: %w", inv, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -876,12 +877,20 @@ func TestExecCleanupAfterError(t *testing.T) {
 	pb.Config.Playbooks = []string{playbookFile}
 	pb.Config.Inventories = []string{getInventoryHost() + ","}
 	pb.Config.VaultPassword = "test-vault-pass"
+	var trace bytes.Buffer
+	pb.Debug, pb.TraceOutput = true, &trace
+	pb.Stdout, pb.Stderr = &bytes.Buffer{}, &bytes.Buffer{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Exec will fail (either timeout or missing ansible binary) but should still clean up
 	_ = pb.Exec(ctx)
+
+	// The traced command proves a vault temp file was created and passed.
+	if !strings.Contains(trace.String(), "--vault-password-file") {
+		t.Fatalf("expected --vault-password-file in traced command, got: %q", trace.String())
+	}
 
 	// Temp files are removed and no longer tracked after Exec.
 	if len(pb.tempFiles) != 0 {
@@ -2709,8 +2718,8 @@ func TestCommandEnvColor(t *testing.T) {
 
 // TestValidateInventoryUnreadable verifies that an unreadable inventory fails validation.
 func TestValidateInventoryUnreadable(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root can read any file")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file mode 0o000 does not block reads on Windows or for root")
 	}
 	inv := filepath.Join(t.TempDir(), "hosts")
 	if err := os.WriteFile(inv, []byte("localhost\n"), 0o000); err != nil {
