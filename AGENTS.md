@@ -18,7 +18,7 @@ particularly useful for infrastructure automation tools.
 
 - Follow standard Go conventions (gofmt, golangci-lint)
 - Use context.Context for command execution and cancellation
-- Error handling with github.com/pkg/errors for wrapped errors with context
+- Error handling with stdlib `errors` and `fmt.Errorf` using `%w`
 - Struct-based configuration with sensible defaults
 
 ### File Organization
@@ -35,8 +35,8 @@ particularly useful for infrastructure automation tools.
 
 ### Configuration
 
-- All Ansible options exposed through `PlaybookConfig` struct
-- Builder pattern for setting options
+- All Ansible options exposed through the `Config` struct
+- Options are plain struct fields set directly on `Playbook.Config`
 - Validation happens before command execution
 
 ## Structure

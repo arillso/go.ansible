@@ -122,8 +122,8 @@ type Config struct {
 	// a temporary file whose path is passed via ansible-playbook --private-key.
 	PrivateKey string
 	// PrivateKeyFile is the path to the SSH private key file passed via
-	// ansible-playbook --private-key. It is populated automatically from
-	// PrivateKey when that is set.
+	// ansible-playbook --private-key. When PrivateKey is set, Exec uses a
+	// temporary file instead and leaves this field unchanged.
 	PrivateKeyFile string
 	// AskBecomePass prompts for the privilege escalation password
 	// (maps to ansible-playbook --ask-become-pass).
@@ -183,14 +183,16 @@ type Config struct {
 	// (maps to ansible-playbook --sftp-extra-args).
 	SFTPExtraArgs string
 	// SSHTransferMethod selects the file transfer method, e.g. "smart", "scp"
-	// or "sftp" (maps to ansible-playbook --ssh-transfer-method).
+	// or "sftp" (sets the ANSIBLE_SSH_TRANSFER_METHOD environment variable).
 	SSHTransferMethod string
 
 	// Playbook options
 
 	// Inventories is the list of inventory sources. Each entry is passed via a
-	// separate ansible-playbook --inventory flag. File-based entries must exist;
-	// inline inventories containing a comma are accepted as-is.
+	// separate ansible-playbook --inventory flag. File-based entries must exist
+	// and be readable; inline inventories containing a comma are accepted as-is.
+	// When empty, ansible-playbook falls back to its configured inventory
+	// (ansible.cfg or ANSIBLE_INVENTORY).
 	Inventories []string
 	// Playbooks is the list of playbooks to run. Entries may be file paths,
 	// glob patterns, or collection FQCN references (namespace.collection.name).
@@ -217,8 +219,9 @@ type Config struct {
 	// Verbose sets the verbosity level (1-4), rendered as -v through -vvvv on
 	// both ansible-playbook and ansible-galaxy commands.
 	Verbose int
-	// NoColor disables colored output (maps to ansible-playbook --no-color and
-	// suppresses the ANSIBLE_FORCE_COLOR environment variable).
+	// NoColor disables colored output: it sets ANSIBLE_NOCOLOR=1 and drops any
+	// inherited ANSIBLE_FORCE_COLOR. Without NoColor, color is forced only when
+	// Stdout is an *os.File (e.g. the process stdout), not for custom writers.
 	NoColor bool
 
 	// Vault options
@@ -230,8 +233,8 @@ type Config struct {
 	// ansible-playbook --vault-password-file.
 	VaultPassword string
 	// VaultPasswordFile is the path to the vault password file passed via
-	// ansible-playbook --vault-password-file. It is populated automatically
-	// from VaultPassword when that is set.
+	// ansible-playbook --vault-password-file. When VaultPassword is set, Exec
+	// uses a temporary file instead and leaves this field unchanged.
 	VaultPasswordFile string
 	// AskVaultPass prompts for the vault password
 	// (maps to ansible-playbook --ask-vault-pass).
@@ -252,9 +255,10 @@ type Config struct {
 	// Galaxy options
 
 	// GalaxyFile is the requirements file for installing roles and collections.
-	// When set, ansible-galaxy role install and collection install commands are
-	// run before the playbook. It is used as the --role-file and
-	// --requirements-file value unless overridden by GalaxyRequirementsFile.
+	// When it or GalaxyRequirementsFile is set, ansible-galaxy role install and
+	// collection install commands are run before the playbook. It is used as
+	// the --role-file and --requirements-file value unless overridden by
+	// GalaxyRequirementsFile.
 	GalaxyFile string
 	// GalaxyAPIKey is the Galaxy API token. It is exported as the
 	// ANSIBLE_GALAXY_TOKEN environment variable rather than passed as a flag.
@@ -299,7 +303,8 @@ type Config struct {
 	GalaxyRequiredValidSignatureCount int
 	// GalaxyRequirementsFile overrides GalaxyFile as the requirements source for
 	// both role install (--role-file) and collection install
-	// (--requirements-file) when set.
+	// (--requirements-file) when set. It also triggers the galaxy installs on
+	// its own. The effective file must exist.
 	GalaxyRequirementsFile string
 	// GalaxyRolesPath is the install destination for roles
 	// (maps to ansible-galaxy role install --roles-path).
@@ -317,25 +322,31 @@ type Config struct {
 	// Other options
 
 	// CallbacksEnabled enables additional callback plugins
-	// (maps to ansible-playbook --callbacks-enabled).
+	// (sets the ANSIBLE_CALLBACKS_ENABLED environment variable).
 	CallbacksEnabled string
 	// PollInterval is the poll interval in seconds for async tasks
-	// (maps to ansible-playbook --poll-interval).
+	// (sets the ANSIBLE_POLL_INTERVAL environment variable).
 	PollInterval int
-	// GatherSubset restricts the subset of facts gathered
-	// (maps to ansible-playbook --gather-subset).
+	// GatherSubset is not supported: ansible-playbook has no CLI flag or
+	// environment variable for it. Exec returns an error when it is set.
+	//
+	// Deprecated: set gather_subset on the play instead.
 	GatherSubset string
-	// GatherTimeout is the timeout in seconds for fact gathering
-	// (maps to ansible-playbook --gather-timeout).
+	// GatherTimeout is not supported: ansible-playbook has no CLI flag or
+	// environment variable for it. Exec returns an error when it is set.
+	//
+	// Deprecated: set gather_timeout on the play instead.
 	GatherTimeout int
 	// StrategyPlugin selects the execution strategy plugin, e.g. "linear" or
-	// "free" (maps to ansible-playbook --strategy).
+	// "free" (sets the ANSIBLE_STRATEGY environment variable).
 	StrategyPlugin string
-	// MaxFailPercentage aborts the run once this percentage of hosts has failed
-	// (maps to ansible-playbook --max-fail-percentage).
+	// MaxFailPercentage is not supported: ansible-playbook has no CLI flag or
+	// environment variable for it. Exec returns an error when it is set.
+	//
+	// Deprecated: set max_fail_percentage on the play instead.
 	MaxFailPercentage int
 	// AnyErrorsFatal aborts the entire run if any host fails
-	// (maps to ansible-playbook --any-errors-fatal).
+	// (sets the ANSIBLE_ANY_ERRORS_FATAL environment variable).
 	AnyErrorsFatal bool
 	// ConfigFile is the path to an Ansible configuration file.
 	// If set, the file must exist or Exec will return an error.
@@ -386,7 +397,18 @@ func NewPlaybook() *Playbook {
 // It resolves playbook paths, prepares temporary files, builds and executes commands,
 // and cleans up temporary files afterward.
 func (p *Playbook) Exec(ctx context.Context) error {
-	defer p.cleanupTempFiles()
+	// prepareTempFiles points the *File fields at temp files that are removed
+	// afterwards; restore the caller's values so a reused Playbook does not
+	// pass a deleted path on the next Exec.
+	keyFile, vaultFile := p.Config.PrivateKeyFile, p.Config.VaultPasswordFile
+	defer func() {
+		p.cleanupTempFiles()
+		p.Config.PrivateKeyFile, p.Config.VaultPasswordFile = keyFile, vaultFile
+	}()
+
+	if err := p.Config.validateUnsupported(); err != nil {
+		return err
+	}
 
 	if err := p.resolvePlaybooks(); err != nil {
 		return fmt.Errorf("failed to resolve playbooks: %w", err)
@@ -402,6 +424,25 @@ func (p *Playbook) Exec(ctx context.Context) error {
 	}
 
 	return p.runCommands(ctx, cmds)
+}
+
+// validateUnsupported rejects options that ansible-playbook cannot take from
+// the command line or the environment; they are play keywords only.
+func (c *Config) validateUnsupported() error {
+	var unsupported []string
+	if c.GatherSubset != "" {
+		unsupported = append(unsupported, "GatherSubset (gather_subset)")
+	}
+	if c.GatherTimeout != 0 {
+		unsupported = append(unsupported, "GatherTimeout (gather_timeout)")
+	}
+	if c.MaxFailPercentage != 0 {
+		unsupported = append(unsupported, "MaxFailPercentage (max_fail_percentage)")
+	}
+	if len(unsupported) > 0 {
+		return fmt.Errorf("unsupported options, set them as play keywords instead: %s", strings.Join(unsupported, ", "))
+	}
+	return nil
 }
 
 // isCollectionPlaybook checks if a playbook reference is a collection FQCN.
@@ -508,6 +549,16 @@ func (p *Playbook) cleanupTempFiles() {
 	for _, f := range p.tempFiles {
 		_ = os.Remove(f) // Best effort cleanup, ignore errors
 	}
+	p.tempFiles = nil
+}
+
+// galaxyRequirementsFile returns the effective galaxy requirements file:
+// GalaxyRequirementsFile when set, otherwise GalaxyFile.
+func (c *Config) galaxyRequirementsFile() string {
+	if c.GalaxyRequirementsFile != "" {
+		return c.GalaxyRequirementsFile
+	}
+	return c.GalaxyFile
 }
 
 // buildCommands constructs the list of exec.Cmd commands (version, galaxy, playbook)
@@ -520,10 +571,10 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 		cmds = append(cmds, p.versionCommand(ctx))
 	}
 
-	// Galaxy commands (if GalaxyFile is set)
-	if p.Config.GalaxyFile != "" {
-		if _, err := os.Stat(p.Config.GalaxyFile); os.IsNotExist(err) {
-			return nil, fmt.Errorf("galaxy file not found: %s", p.Config.GalaxyFile)
+	// Galaxy commands (if GalaxyFile or GalaxyRequirementsFile is set)
+	if reqFile := p.Config.galaxyRequirementsFile(); reqFile != "" {
+		if _, err := os.Stat(reqFile); err != nil {
+			return nil, fmt.Errorf("galaxy file not found: %s: %w", reqFile, err)
 		}
 		cmds = append(cmds, p.galaxyRoleCommand(ctx), p.galaxyCollectionCommand(ctx))
 	}
@@ -535,26 +586,36 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 		}
 	}
 
-	// Build a single Ansible command with all inventories (only if at least one is configured)
-	if len(p.Config.Inventories) > 0 {
-		cmds = append(cmds, p.ansibleCommand(ctx, p.Config.Inventories))
-	}
-
-	if len(cmds) == 0 {
-		return nil, errors.New("no commands to execute: configure at least one inventory, galaxy file, or enable --version")
-	}
+	// The playbook always runs. Without inventories ansible-playbook uses its
+	// configured inventory (ansible.cfg or ANSIBLE_INVENTORY).
+	cmds = append(cmds, p.ansibleCommand(ctx, p.Config.Inventories))
 
 	return cmds, nil
 }
 
 // CommandStrings returns the command lines that would be executed, without running them.
 // This is useful for debugging, logging, or previewing the commands.
-// This method works on a shallow copy of the Playbook so it does not mutate Config.Playbooks.
+// Values of sensitive flags (--extra-vars, --private-key, --vault-password-file)
+// are masked as in debug trace output; no temporary files are written.
+// This method works on a shallow copy of the Playbook so it does not mutate Config.
 func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 	// Work on a shallow copy so resolvePlaybooks does not mutate the caller's Config.
 	cp := *p
 	cp.Config.Playbooks = make([]string, len(p.Config.Playbooks))
 	copy(cp.Config.Playbooks, p.Config.Playbooks)
+
+	if err := cp.Config.validateUnsupported(); err != nil {
+		return nil, err
+	}
+
+	// Exec passes temp files for inline secrets; show the flags with a
+	// placeholder (masked below) instead of writing secrets to disk.
+	if cp.Config.PrivateKey != "" {
+		cp.Config.PrivateKeyFile = "******"
+	}
+	if cp.Config.VaultPassword != "" {
+		cp.Config.VaultPasswordFile = "******"
+	}
 
 	if err := cp.resolvePlaybooks(); err != nil {
 		return nil, fmt.Errorf("failed to resolve playbooks: %w", err)
@@ -567,14 +628,49 @@ func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 
 	result := make([]string, len(cmds))
 	for i, cmd := range cmds {
-		result[i] = strings.Join(cmd.Args, " ")
+		result[i] = strings.Join(maskSensitiveArgs(cmd.Args), " ")
 	}
 	return result, nil
 }
 
+// commandEnv builds the environment shared by all commands of one run.
+func (p *Playbook) commandEnv(stdout io.Writer, envVars []string) []string {
+	inherited := os.Environ()
+	env := make([]string, 0, len(inherited)+len(envVars)+len(p.Config.ExtraEnv)+3)
+	for _, kv := range inherited {
+		// NoColor must win over an inherited ANSIBLE_FORCE_COLOR.
+		if p.Config.NoColor && strings.HasPrefix(kv, "ANSIBLE_FORCE_COLOR=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
+	if p.Config.NoColor {
+		env = append(env, "ANSIBLE_NOCOLOR=1")
+	} else if _, isFile := stdout.(*os.File); isFile {
+		// ponytail: *os.File, not a TTY check; keeps color in CI logs (pipes)
+		// while custom writers such as bytes.Buffer get plain text.
+		env = append(env, "ANSIBLE_FORCE_COLOR=1")
+	}
+	if p.Config.GalaxyAPIKey != "" {
+		env = append(env, "ANSIBLE_GALAXY_TOKEN="+p.Config.GalaxyAPIKey)
+	}
+	env = append(env, envVars...)
+	envKeys := make([]string, 0, len(p.Config.ExtraEnv))
+	for k := range p.Config.ExtraEnv {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		env = append(env, k+"="+p.Config.ExtraEnv[k])
+	}
+	return env
+}
+
 // runCommands executes the given commands sequentially.
-// The context is already embedded in each exec.Cmd via exec.CommandContext.
-func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
+// The context is already embedded in each exec.Cmd via exec.CommandContext;
+// it is used here only to attach ctx.Err() to the error of a killed command.
+func (p *Playbook) runCommands(ctx context.Context, cmds []*exec.Cmd) error {
 	envVars, err := buildCustomEnvVars(&p.Config)
 	if err != nil {
 		return fmt.Errorf("failed to build environment: %w", err)
@@ -587,29 +683,21 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
+	env := p.commandEnv(stdout, envVars)
 	for i, cmd := range cmds {
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
-		if !p.Config.NoColor {
-			cmd.Env = append(cmd.Env, "ANSIBLE_FORCE_COLOR=1")
-		}
-		if p.Config.GalaxyAPIKey != "" {
-			cmd.Env = append(cmd.Env, "ANSIBLE_GALAXY_TOKEN="+p.Config.GalaxyAPIKey)
-		}
-		cmd.Env = append(cmd.Env, envVars...)
-		envKeys := make([]string, 0, len(p.Config.ExtraEnv))
-		for k := range p.Config.ExtraEnv {
-			envKeys = append(envKeys, k)
-		}
-		sort.Strings(envKeys)
-		for _, k := range envKeys {
-			cmd.Env = append(cmd.Env, k+"="+p.Config.ExtraEnv[k])
-		}
+		cmd.Env = env
 		if p.Debug {
 			p.trace(cmd)
 		}
 		if err := cmd.Run(); err != nil {
+			// A cancelled context kills the process; keep ctx.Err() in the
+			// chain so callers can match context.Canceled/DeadlineExceeded.
+			// Start already returns ctx.Err() when ctx was done beforehand.
+			if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+				err = fmt.Errorf("%w: %w", ctxErr, err)
+			}
 			cmdName := filepath.Base(cmd.Path)
 			if ae := newAnsibleError(cmdName, err); ae != nil {
 				ae.CommandIndex = i + 1
@@ -622,15 +710,28 @@ func (p *Playbook) runCommands(_ context.Context, cmds []*exec.Cmd) error {
 	return nil
 }
 
-// validateInventory checks whether the inventory file exists.
-// For inline inventories (containing a comma), it is assumed to be valid.
+// validateInventory checks whether the inventory file or directory exists and
+// is readable. For inline inventories (containing a comma), it is assumed to be valid.
 func validateInventory(inv string) error {
 	if strings.Contains(inv, ",") {
 		return nil
 	}
-	if _, err := os.Stat(inv); os.IsNotExist(err) {
+	fi, err := os.Stat(inv)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("inventory not found: %s", inv)
 	}
+	if err != nil {
+		return fmt.Errorf("inventory not readable: %s: %w", inv, err)
+	}
+	// Opening a FIFO or device can block; only probe files and directories.
+	if !fi.Mode().IsRegular() && !fi.IsDir() {
+		return nil
+	}
+	f, err := os.Open(inv) //nolint:gosec // path comes from trusted configuration
+	if err != nil {
+		return fmt.Errorf("inventory not readable: %s: %w", inv, err)
+	}
+	_ = f.Close()
 	return nil
 }
 
@@ -655,6 +756,22 @@ func buildCustomEnvVars(cfg *Config) ([]string, error) {
 	}
 	if cfg.OutputCallback != "" {
 		env = append(env, "ANSIBLE_STDOUT_CALLBACK="+cfg.OutputCallback)
+	}
+	// ansible-playbook has no CLI flags for these; they are config settings.
+	if cfg.StrategyPlugin != "" {
+		env = append(env, "ANSIBLE_STRATEGY="+cfg.StrategyPlugin)
+	}
+	if cfg.CallbacksEnabled != "" {
+		env = append(env, "ANSIBLE_CALLBACKS_ENABLED="+cfg.CallbacksEnabled)
+	}
+	if cfg.PollInterval > 0 {
+		env = append(env, "ANSIBLE_POLL_INTERVAL="+strconv.Itoa(cfg.PollInterval))
+	}
+	if cfg.AnyErrorsFatal {
+		env = append(env, "ANSIBLE_ANY_ERRORS_FATAL=True")
+	}
+	if cfg.SSHTransferMethod != "" {
+		env = append(env, "ANSIBLE_SSH_TRANSFER_METHOD="+cfg.SSHTransferMethod)
 	}
 	return env, nil
 }
@@ -743,12 +860,8 @@ func (p *Playbook) commonGalaxyOptions() []argOption {
 
 // galaxyRoleCommand creates the command to install Ansible Galaxy roles.
 func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
-	roleFile := p.Config.GalaxyFile
-	if p.Config.GalaxyRequirementsFile != "" {
-		roleFile = p.Config.GalaxyRequirementsFile
-	}
 	opts := append(p.commonGalaxyOptions(),
-		argOption{flag: "--role-file", value: roleFile},
+		argOption{flag: "--role-file", value: p.Config.galaxyRequirementsFile()},
 		argOption{flag: "--roles-path", value: p.Config.GalaxyRolesPath},
 		argOption{flag: "--no-deps", value: p.Config.GalaxyNoDeps},
 	)
@@ -757,12 +870,8 @@ func (p *Playbook) galaxyRoleCommand(ctx context.Context) *exec.Cmd {
 
 // galaxyCollectionCommand creates the command to install Ansible Galaxy collections.
 func (p *Playbook) galaxyCollectionCommand(ctx context.Context) *exec.Cmd {
-	reqFile := p.Config.GalaxyFile
-	if p.Config.GalaxyRequirementsFile != "" {
-		reqFile = p.Config.GalaxyRequirementsFile
-	}
 	opts := append(p.commonGalaxyOptions(),
-		argOption{flag: "--requirements-file", value: reqFile},
+		argOption{flag: "--requirements-file", value: p.Config.galaxyRequirementsFile()},
 		argOption{flag: "--collections-path", value: p.Config.GalaxyCollectionsPath},
 		argOption{flag: "--pre", value: p.Config.GalaxyPre},
 		argOption{flag: "--upgrade", value: p.Config.GalaxyUpgrade},
@@ -782,30 +891,18 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 	for _, inv := range inventories {
 		args = append(args, "--inventory", inv)
 	}
-	if p.Config.SyntaxCheck || p.Config.ListHosts || p.Config.ListTags || p.Config.ListTasks {
-		var flag string
-		switch {
-		case p.Config.ListHosts:
-			flag = "--list-hosts"
-		case p.Config.ListTags:
-			flag = "--list-tags"
-		case p.Config.ListTasks:
-			flag = "--list-tasks"
-		default:
-			flag = "--syntax-check"
-		}
-		args = append(args, flag)
-		args = append(args, p.Config.Playbooks...)
-		return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
-	}
-
+	// The inspection flags combine with each other and with all other options
+	// (--limit, --tags, vault, ...), which affect what they report.
 	options := []argOption{
+		{flag: "--syntax-check", value: p.Config.SyntaxCheck},
+		{flag: "--list-hosts", value: p.Config.ListHosts},
+		{flag: "--list-tags", value: p.Config.ListTags},
+		{flag: "--list-tasks", value: p.Config.ListTasks},
 		{flag: "--check", value: p.Config.Check},
 		{flag: "--diff", value: p.Config.Diff},
 		{flag: "--flush-cache", value: p.Config.FlushCache},
 		{flag: "--force-handlers", value: p.Config.ForceHandlers},
 		{flag: "--step", value: p.Config.Step},
-		{flag: "--no-color", value: p.Config.NoColor},
 		{flag: "--forks", value: p.Config.Forks},
 		{flag: "--user", value: p.Config.User},
 		{flag: "--connection", value: p.Config.Connection},
@@ -815,7 +912,6 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 		{flag: "--sftp-extra-args", value: p.Config.SFTPExtraArgs},
 		{flag: "--scp-extra-args", value: p.Config.SCPExtraArgs},
 		{flag: "--ssh-extra-args", value: p.Config.SSHExtraArgs},
-		{flag: "--ssh-transfer-method", value: p.Config.SSHTransferMethod},
 		{flag: "--ask-become-pass", value: p.Config.AskBecomePass},
 		{flag: "--ask-pass", value: p.Config.AskPass},
 		{flag: "--ask-vault-pass", value: p.Config.AskVaultPass},
@@ -825,13 +921,6 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 		{flag: "--private-key", value: p.Config.PrivateKeyFile},
 		{flag: "--vault-id", value: p.Config.VaultID},
 		{flag: "--vault-password-file", value: p.Config.VaultPasswordFile},
-		{flag: "--callbacks-enabled", value: p.Config.CallbacksEnabled},
-		{flag: "--poll-interval", value: p.Config.PollInterval},
-		{flag: "--strategy", value: p.Config.StrategyPlugin},
-		{flag: "--max-fail-percentage", value: p.Config.MaxFailPercentage},
-		{flag: "--any-errors-fatal", value: p.Config.AnyErrorsFatal},
-		{flag: "--gather-subset", value: p.Config.GatherSubset},
-		{flag: "--gather-timeout", value: p.Config.GatherTimeout},
 		{flag: "--tags", value: p.Config.Tags},
 		{flag: "--skip-tags", value: p.Config.SkipTags},
 		{flag: "--start-at-task", value: p.Config.StartAtTask},
@@ -895,6 +984,7 @@ func isValidSSHKey(content string) bool {
 	// List of valid private key types
 	keyTypes := []string{
 		"PRIVATE KEY",
+		"ENCRYPTED PRIVATE KEY",
 		"RSA PRIVATE KEY",
 		"OPENSSH PRIVATE KEY",
 		"EC PRIVATE KEY",

@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -675,6 +677,11 @@ func TestIsValidSSHKey(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "Valid encrypted PKCS#8 private key",
+			content: "-----BEGIN ENCRYPTED PRIVATE KEY-----\nTEST-KEY-DATA\n-----END ENCRYPTED PRIVATE KEY-----",
+			want:    true,
+		},
+		{
 			name:    "Valid EC private key",
 			content: "-----BEGIN EC PRIVATE KEY-----\nTEST-KEY-DATA\n-----END EC PRIVATE KEY-----",
 			want:    true,
@@ -870,6 +877,9 @@ func TestExecCleanupAfterError(t *testing.T) {
 	pb.Config.Playbooks = []string{playbookFile}
 	pb.Config.Inventories = []string{getInventoryHost() + ","}
 	pb.Config.VaultPassword = "test-vault-pass"
+	var trace bytes.Buffer
+	pb.Debug, pb.TraceOutput = true, &trace
+	pb.Stdout, pb.Stderr = &bytes.Buffer{}, &bytes.Buffer{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -877,16 +887,18 @@ func TestExecCleanupAfterError(t *testing.T) {
 	// Exec will fail (either timeout or missing ansible binary) but should still clean up
 	_ = pb.Exec(ctx)
 
-	// Verify that at least one temporary file was tracked (vault password)
-	if len(pb.tempFiles) == 0 {
-		t.Fatal("expected at least one temporary file to be tracked for cleanup verification")
+	// The traced command proves a vault temp file was created and passed.
+	if !strings.Contains(trace.String(), "--vault-password-file") {
+		t.Fatalf("expected --vault-password-file in traced command, got: %q", trace.String())
 	}
 
-	// Verify that temporary files were cleaned up
-	for _, f := range pb.tempFiles {
-		if _, err := os.Stat(f); !os.IsNotExist(err) {
-			t.Errorf("temporary file %s was not cleaned up after error", f)
-		}
+	// Temp files are removed and no longer tracked after Exec.
+	if len(pb.tempFiles) != 0 {
+		t.Errorf("expected tempFiles to be reset after Exec, got %v", pb.tempFiles)
+	}
+	left, _ := filepath.Glob(filepath.Join(tempDir, "ansible-vault-*"))
+	if len(left) != 0 {
+		t.Errorf("temporary files were not cleaned up after error: %v", left)
 	}
 }
 
@@ -2014,31 +2026,28 @@ func TestBuildCommandsShowVersion(t *testing.T) {
 	}
 }
 
-// TestBuildCommandsNoInventoryNoGalaxyNoVersion verifies that buildCommands returns
-// an error when no inventory, galaxy file, or version flag is configured.
-func TestBuildCommandsNoInventoryNoGalaxyNoVersion(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test-no-commands")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
+// TestBuildCommandsNoInventory verifies that the playbook still runs without
+// inventories (ansible-playbook then uses its configured inventory) instead of
+// being skipped silently.
+func TestBuildCommandsNoInventory(t *testing.T) {
+	tempDir := t.TempDir()
 	playbookFile := filepath.Join(tempDir, "test.yml")
 	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
 		t.Fatalf("Failed to write playbook: %v", err)
 	}
 
 	pb := NewPlaybook()
-	pb.Config.TempDir = tempDir
 	pb.Config.Playbooks = []string{playbookFile}
-	// No inventories, no galaxy file, no version — should produce no commands
 
-	_, err = pb.buildCommands(context.Background())
-	if err == nil {
-		t.Fatal("expected error when no commands would be generated")
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no commands to execute") {
-		t.Errorf("expected 'no commands to execute' error, got: %v", err)
+	if len(cmds) != 1 || filepath.Base(cmds[0].Path) != "ansible-playbook" {
+		t.Fatalf("expected one ansible-playbook command, got %v", cmds)
+	}
+	if strings.Contains(strings.Join(cmds[0].Args, " "), "--inventory") {
+		t.Errorf("expected no --inventory flag, got: %v", cmds[0].Args)
 	}
 }
 
@@ -2229,18 +2238,16 @@ func TestCommandStringsNoPlaybooks(t *testing.T) {
 	}
 }
 
-// TestCallbacksEnabled verifies that CallbacksEnabled is passed as --callbacks-enabled.
+// TestCallbacksEnabled verifies that CallbacksEnabled is passed as
+// ANSIBLE_CALLBACKS_ENABLED (ansible-playbook has no --callbacks-enabled flag).
 func TestCallbacksEnabled(t *testing.T) {
-	pb := NewPlaybook()
-	pb.Config.Playbooks = []string{"playbook.yml"}
-	pb.Config.CallbacksEnabled = "timer"
-	inv := getInventoryHost() + ","
-
-	cmd := pb.ansibleCommand(context.Background(), []string{inv})
-	args := strings.Join(cmd.Args, " ")
-
-	if !strings.Contains(args, "--callbacks-enabled timer") {
-		t.Errorf("expected --callbacks-enabled timer, got: %s", args)
+	cfg := Config{CallbacksEnabled: "timer"}
+	env, err := buildCustomEnvVars(&cfg)
+	if err != nil {
+		t.Fatalf("buildCustomEnvVars failed: %v", err)
+	}
+	if !slices.Contains(env, "ANSIBLE_CALLBACKS_ENABLED=timer") {
+		t.Errorf("expected ANSIBLE_CALLBACKS_ENABLED=timer, got: %v", env)
 	}
 }
 
@@ -2504,5 +2511,221 @@ func TestPlaybookConcurrentSeparateInstances(t *testing.T) {
 		if err != nil {
 			t.Errorf("goroutine %d: %v", i, err)
 		}
+	}
+}
+
+// TestUnsupportedFlagsMovedToEnv verifies that options without an
+// ansible-playbook CLI flag are passed as environment variables and never
+// appear as (unrecognized) arguments.
+func TestUnsupportedFlagsMovedToEnv(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.NoColor = true
+	pb.Config.StrategyPlugin = "free"
+	pb.Config.CallbacksEnabled = "timer"
+	pb.Config.PollInterval = 3
+	pb.Config.AnyErrorsFatal = true
+	pb.Config.SSHTransferMethod = "sftp"
+
+	args := strings.Join(pb.ansibleCommand(context.Background(), []string{"localhost,"}).Args, " ")
+	for _, flag := range []string{"--no-color", "--strategy", "--callbacks-enabled", "--poll-interval",
+		"--any-errors-fatal", "--ssh-transfer-method", "--max-fail-percentage", "--gather-subset", "--gather-timeout"} {
+		if strings.Contains(args, flag) {
+			t.Errorf("unexpected flag %s in: %s", flag, args)
+		}
+	}
+
+	env, err := buildCustomEnvVars(&pb.Config)
+	if err != nil {
+		t.Fatalf("buildCustomEnvVars failed: %v", err)
+	}
+	for _, want := range []string{"ANSIBLE_STRATEGY=free", "ANSIBLE_CALLBACKS_ENABLED=timer",
+		"ANSIBLE_POLL_INTERVAL=3", "ANSIBLE_ANY_ERRORS_FATAL=True", "ANSIBLE_SSH_TRANSFER_METHOD=sftp"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("expected %s in env, got: %v", want, env)
+		}
+	}
+}
+
+// TestUnsupportedPlayKeywordsRejected verifies that play-keyword-only options
+// fail fast instead of producing an invalid command line.
+func TestUnsupportedPlayKeywordsRejected(t *testing.T) {
+	for name, cfg := range map[string]Config{
+		"GatherSubset":      {GatherSubset: "network"},
+		"GatherTimeout":     {GatherTimeout: 10},
+		"MaxFailPercentage": {MaxFailPercentage: 20},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pb := NewPlaybook()
+			pb.Config = cfg
+			pb.Config.Playbooks = []string{"arillso.test.site"}
+			_, err := pb.CommandStrings(context.Background())
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("expected unsupported error naming %s, got: %v", name, err)
+			}
+		})
+	}
+}
+
+// TestInspectionFlagsKeepOptions verifies that --syntax-check/--list-* combine
+// with each other and keep options such as --limit, --tags and vault flags.
+func TestInspectionFlagsKeepOptions(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"playbook.yml"}
+	pb.Config.ListHosts = true
+	pb.Config.ListTasks = true
+	pb.Config.SyntaxCheck = true
+	pb.Config.Limit = "web"
+	pb.Config.Tags = "deploy"
+	pb.Config.VaultPasswordFile = "/tmp/vault"
+	pb.Config.ExtraVars = []string{"a=b"}
+
+	args := strings.Join(pb.ansibleCommand(context.Background(), []string{"localhost,"}).Args, " ")
+	for _, want := range []string{"--syntax-check", "--list-hosts", "--list-tasks", "--limit web",
+		"--tags deploy", "--vault-password-file /tmp/vault", "--extra-vars a=b"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("expected %q in: %s", want, args)
+		}
+	}
+}
+
+// TestRunCommandsContextError verifies that a killed command keeps ctx.Err()
+// in the error chain.
+func TestRunCommandsContextError(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep not available")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	pb := NewPlaybook()
+	pb.Stdout, pb.Stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	err := pb.runCommands(ctx, []*exec.Cmd{exec.CommandContext(ctx, "sleep", "5")})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded in chain, got: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Errorf("expected *exec.ExitError still in chain, got: %v", err)
+	}
+}
+
+// TestCommandStringsSecrets verifies that the preview includes the temp-file
+// flags for inline secrets, masks them and extra-vars, and writes no files.
+func TestCommandStringsSecrets(t *testing.T) {
+	tempDir := t.TempDir()
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{"arillso.test.site"}
+	pb.Config.PrivateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----"
+	pb.Config.VaultPassword = "vault-secret"
+	pb.Config.ExtraVars = []string{"db_pass=secret"}
+
+	cmds, err := pb.CommandStrings(context.Background())
+	if err != nil {
+		t.Fatalf("CommandStrings failed: %v", err)
+	}
+	got := cmds[len(cmds)-1]
+	for _, want := range []string{"--private-key ******", "--vault-password-file ******", "--extra-vars ******"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "secret") {
+		t.Errorf("secret leaked into preview: %s", got)
+	}
+	if entries, _ := os.ReadDir(tempDir); len(entries) != 0 {
+		t.Errorf("expected no temp files, got %d", len(entries))
+	}
+	if pb.Config.PrivateKeyFile != "" || pb.Config.VaultPasswordFile != "" {
+		t.Error("CommandStrings mutated Config")
+	}
+}
+
+// TestGalaxyRequirementsFile verifies that GalaxyRequirementsFile triggers the
+// galaxy installs on its own and that the effective file is validated.
+func TestGalaxyRequirementsFile(t *testing.T) {
+	tempDir := t.TempDir()
+	req := filepath.Join(tempDir, "requirements.yml")
+	if err := os.WriteFile(req, []byte("---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"arillso.test.site"}
+	pb.Config.GalaxyRequirementsFile = req
+	cmds, err := pb.buildCommands(context.Background())
+	if err != nil {
+		t.Fatalf("buildCommands failed: %v", err)
+	}
+	if len(cmds) != 3 || !strings.Contains(strings.Join(cmds[0].Args, " "), "--role-file "+req) {
+		t.Fatalf("expected galaxy role+collection and playbook commands, got %v", cmds)
+	}
+
+	pb.Config.GalaxyFile = req
+	pb.Config.GalaxyRequirementsFile = filepath.Join(tempDir, "missing.yml")
+	if _, err := pb.buildCommands(context.Background()); err == nil || !strings.Contains(err.Error(), "missing.yml") {
+		t.Errorf("expected error for missing override file, got: %v", err)
+	}
+}
+
+// TestExecRestoresSecretFilePaths verifies that Exec does not leave the
+// deleted temp-file paths in Config.
+func TestExecRestoresSecretFilePaths(t *testing.T) {
+	tempDir := t.TempDir()
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.Playbooks = []string{"arillso.test.site"}
+	pb.Config.Inventories = []string{filepath.Join(tempDir, "missing-inventory")} // fails after temp files
+	pb.Config.PrivateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----"
+	pb.Config.VaultPasswordFile = "/caller/vault"
+
+	if err := pb.Exec(context.Background()); err == nil {
+		t.Fatal("expected error for missing inventory")
+	}
+	if pb.Config.PrivateKeyFile != "" || pb.Config.VaultPasswordFile != "/caller/vault" {
+		t.Errorf("Config not restored: key=%q vault=%q", pb.Config.PrivateKeyFile, pb.Config.VaultPasswordFile)
+	}
+	if pb.tempFiles != nil {
+		t.Errorf("tempFiles not reset: %v", pb.tempFiles)
+	}
+}
+
+// TestCommandEnvColor verifies NoColor wins over an inherited
+// ANSIBLE_FORCE_COLOR and that color is not forced for custom writers.
+func TestCommandEnvColor(t *testing.T) {
+	t.Setenv("ANSIBLE_FORCE_COLOR", "1")
+
+	pb := NewPlaybook()
+	pb.Config.NoColor = true
+	env := pb.commandEnv(os.Stdout, nil)
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "ANSIBLE_FORCE_COLOR=") }) {
+		t.Error("NoColor: inherited ANSIBLE_FORCE_COLOR not removed")
+	}
+	if !slices.Contains(env, "ANSIBLE_NOCOLOR=1") {
+		t.Error("NoColor: ANSIBLE_NOCOLOR=1 missing")
+	}
+
+	pb.Config.NoColor = false
+	if !slices.Contains(pb.commandEnv(os.Stdout, nil), "ANSIBLE_FORCE_COLOR=1") {
+		t.Error("expected forced color for *os.File stdout")
+	}
+	os.Unsetenv("ANSIBLE_FORCE_COLOR") //nolint:errcheck // restored by t.Setenv
+	if slices.Contains(pb.commandEnv(&bytes.Buffer{}, nil), "ANSIBLE_FORCE_COLOR=1") {
+		t.Error("expected no forced color for bytes.Buffer stdout")
+	}
+}
+
+// TestValidateInventoryUnreadable verifies that an unreadable inventory fails validation.
+func TestValidateInventoryUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file mode 0o000 does not block reads on Windows or for root")
+	}
+	inv := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(inv, []byte("localhost\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInventory(inv); err == nil || !strings.Contains(err.Error(), "not readable") {
+		t.Errorf("expected 'not readable' error, got: %v", err)
 	}
 }

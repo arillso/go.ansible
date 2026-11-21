@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The playbook always runs, also without `Inventories`. Configs that set only `GalaxyFile`,
+  `GalaxyRequirementsFile` or `ShowVersion` without `Inventories` now also run the playbook
+  against the configured default inventory (ansible.cfg or `ANSIBLE_INVENTORY`)
+- `CommandStrings` masks sensitive values (`--extra-vars`, `--private-key`,
+  `--vault-password-file`) like the debug trace
+- Color is no longer forced when `Stdout` is a custom writer such as `bytes.Buffer`
+
+### Fixed
+
+- `NoColor`, `StrategyPlugin`, `CallbacksEnabled`, `PollInterval`, `AnyErrorsFatal` and
+  `SSHTransferMethod` are passed as `ANSIBLE_*` environment variables; ansible-playbook
+  rejected the former CLI flags with `unrecognized arguments`
+- Playbook runs without `Inventories` instead of being skipped while `Exec` returned
+  success; ansible-playbook then uses its configured inventory
+- `SyntaxCheck`/`ListHosts`/`ListTags`/`ListTasks` keep all other options (`--limit`,
+  `--tags`, vault, extra-vars, ...) and can be combined
+- Errors from a cancelled or timed-out context contain `ctx.Err()`, so
+  `errors.Is(err, context.DeadlineExceeded)` works
+- `CommandStrings` includes `--private-key`/`--vault-password-file` for inline secrets and
+  masks sensitive values; no temp files are written
+- `GalaxyRequirementsFile` triggers galaxy installs on its own; the effective requirements file is validated
+- `Exec` restores `PrivateKeyFile`/`VaultPasswordFile` and resets temp-file tracking, so a
+  reused `Playbook` does not pass deleted paths
+- `NoColor` removes an inherited `ANSIBLE_FORCE_COLOR`; color is forced only when `Stdout` is an `*os.File`
+- Encrypted PKCS#8 keys (`BEGIN ENCRYPTED PRIVATE KEY`) are accepted
+- Unreadable inventory files fail validation
+
+### Deprecated
+
+- `GatherSubset`, `GatherTimeout` and `MaxFailPercentage`: ansible-playbook has no CLI flag
+  or environment variable for them; `Exec` and `CommandStrings` return an error when set.
+  Use the play keywords instead.
+
 ## [2.0.0] - 2026-03-13
 
 ### Added
