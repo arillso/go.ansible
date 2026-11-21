@@ -122,8 +122,8 @@ Preview the generated command without running Ansible via
 
 All options are fields on `pb.Config`; each doc comment on
 [pkg.go.dev](https://pkg.go.dev/github.com/arillso/go.ansible/v2#Config) says which flag or environment variable it
-sets. [`docs/option-mapping.md`](docs/option-mapping.md) groups them by path. Options that behave differently from a
-plain flag:
+sets or which temp file or command it triggers. [`docs/option-mapping.md`](docs/option-mapping.md) groups them by
+path. Options that behave differently from a plain flag or have a non-zero default:
 
 | Option                                               | Effect                                                                                             | Default        |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------- |
@@ -133,7 +133,7 @@ plain flag:
 | `NoColor`                                            | Sets `ANSIBLE_NOCOLOR=1`; without it, color is forced only when `Stdout` is an `*os.File`          | `false`        |
 | `ExtraEnv`                                           | Extra environment variables, applied last so they override everything else                         | empty          |
 | `Forks`                                              | `--forks`                                                                                          | `5`            |
-| `GatherSubset`, `GatherTimeout`, `MaxFailPercentage` | Deprecated: `Exec` returns an error; set them on the play                                          | empty          |
+| `GatherSubset`, `GatherTimeout`, `MaxFailPercentage` | Deprecated: `Exec` and `CommandStrings` return an error; set them on the play                      | empty          |
 
 ## Contributing
 

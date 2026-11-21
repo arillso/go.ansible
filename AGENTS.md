@@ -6,14 +6,15 @@ struct. Consumers embed it, so every exported identifier is public API.
 ## Conventions
 
 - Every `Config` option is a plain struct field with a doc comment that states how it reaches Ansible
-  ("maps to ansible-playbook --x" or "sets the ANSIBLE_X environment variable"). When adding or changing a field,
-  update `docs/option-mapping.md`, which groups the fields by that path.
+  ("maps to ansible-playbook --x", "sets the ANSIBLE_X environment variable", or the temp file or command it
+  triggers). When adding or changing a field, update `docs/option-mapping.md`, which groups the fields by that path.
 - Wrap errors with stdlib `fmt.Errorf("...: %w", err)`; `github.com/pkg/errors` was removed as a breaking change
   (see `CHANGELOG.md`).
 - A behaviour change gets a test in `ansiblePlaybook_test.go` and an entry under `[Unreleased]` in `CHANGELOG.md`.
   `tag.yml` copies the matching CHANGELOG section into the GitHub Release.
-- A removed or renamed exported field stays as a `// Deprecated:` field that `Exec` rejects
-  (see `GatherSubset`), plus a `BREAKING` entry in `CHANGELOG.md`.
+- An option Ansible cannot take stays as a `// Deprecated:` field that `validateUnsupported` rejects
+  (see `GatherSubset`), plus a `Deprecated` entry in `CHANGELOG.md`. Removing or renaming an exported field is a
+  `BREAKING` entry and a major version.
 
 ## Gotchas
 

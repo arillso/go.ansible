@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 ## Prerequisites
 
-- Go >= 1.23
+- Go >= 1.27.4 (the `go` directive in `go.mod`)
 - Git
 
 ## Development Setup
@@ -37,7 +37,7 @@ git checkout -b fix/issue-description
 
 - Follow standard Go conventions (gofmt, golangci-lint)
 - Use `context.Context` for command execution and cancellation
-- Error handling with `github.com/pkg/errors` for wrapped errors with context
+- Error handling with stdlib `errors` and `fmt.Errorf` using `%w`
 - Line length: no hard limit, but keep it readable
 - Add docstrings for exported functions and types
 

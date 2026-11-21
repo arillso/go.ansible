@@ -348,7 +348,8 @@ type Config struct {
 	// AnyErrorsFatal aborts the entire run if any host fails
 	// (sets the ANSIBLE_ANY_ERRORS_FATAL environment variable).
 	AnyErrorsFatal bool
-	// ConfigFile is the path to an Ansible configuration file.
+	// ConfigFile is the path to an Ansible configuration file
+	// (sets the ANSIBLE_CONFIG environment variable).
 	// If set, the file must exist or Exec will return an error.
 	ConfigFile string
 
@@ -362,7 +363,8 @@ type Config struct {
 	// so they can override built-in variables such as ANSIBLE_GALAXY_TOKEN (from GalaxyAPIKey).
 	ExtraEnv map[string]string
 
-	// ShowVersion prints ansible --version before running playbooks
+	// ShowVersion runs ansible --version as a separate command before the
+	// galaxy and playbook commands.
 	ShowVersion bool
 
 	// TempDir is the directory for temporary files (SSH keys, vault passwords).
