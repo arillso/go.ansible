@@ -1,69 +1,41 @@
 # GO Ansible
 
-## Context
-
-GO Ansible is a Go module for programmatically executing Ansible playbooks. It provides a clean API to:
-
-- Execute Ansible playbooks from Go applications
-- Manage temporary files (SSH keys, Vault passwords) securely
-- Install Ansible Galaxy roles and collections
-- Build and execute ansible-playbook commands with custom options
-
-The module is designed for embedding Ansible automation within Go applications,
-particularly useful for infrastructure automation tools.
+Go library (package `ansible`) that builds and runs `ansible-galaxy` and `ansible-playbook` commands from a `Config`
+struct. Consumers embed it, so every exported identifier is public API.
 
 ## Conventions
 
-### Code Style
+- Every `Config` option is a plain struct field with a doc comment that states how it reaches Ansible
+  ("maps to ansible-playbook --x" or "sets the ANSIBLE_X environment variable"). When adding or changing a field,
+  update `docs/option-mapping.md`, which groups the fields by that path.
+- Wrap errors with stdlib `fmt.Errorf("...: %w", err)`; `github.com/pkg/errors` was removed as a breaking change
+  (see `CHANGELOG.md`).
+- A behaviour change gets a test in `ansiblePlaybook_test.go` and an entry under `[Unreleased]` in `CHANGELOG.md`.
+  `tag.yml` copies the matching CHANGELOG section into the GitHub Release.
+- A removed or renamed exported field stays as a `// Deprecated:` field that `Exec` rejects
+  (see `GatherSubset`), plus a `BREAKING` entry in `CHANGELOG.md`.
 
-- Follow standard Go conventions (gofmt, golangci-lint)
-- Use context.Context for command execution and cancellation
-- Error handling with stdlib `errors` and `fmt.Errorf` using `%w`
-- Struct-based configuration with sensible defaults
+## Gotchas
 
-### File Organization
+- **Flag or environment variable.** `ansible-playbook` rejects unknown flags with `unrecognized arguments`. Before
+  adding a flag in `ansibleCommand`, check `ansible-playbook --help`; options without a flag go through
+  `buildCustomEnvVars` as `ANSIBLE_*` variables (#133).
+- **Play keywords.** Options that exist only as play keywords have neither flag nor variable;
+  `validateUnsupported` rejects them so `Exec` fails instead of silently ignoring them.
+- **Secrets in output.** `trace` and `CommandStrings` mask values of flags listed in `sensitiveFlags`. A new flag
+  that carries a secret goes into that map.
+- **Temp files.** `PrivateKey` and `VaultPassword` are written to `Config.TempDir` with mode `0600`; `Exec` restores
+  the caller's `PrivateKeyFile`/`VaultPasswordFile` afterwards so a reused `Playbook` does not point at a deleted file.
+- **Global test state.** `chmodFile` is a package variable that tests swap out. Tests touching it run without
+  `t.Parallel()`.
+- **Examples are tests.** The `// Output:` lines in `example_test.go` are checked by `go test`; a change to argument
+  order or masking updates them.
+- **Go directive.** Raising `go` in `go.mod` raises the minimum Go version for every consumer.
 
-- `ansiblePlaybook.go`: Main playbook execution logic and configuration
-- `ansiblePlaybook_test.go`: Test suite covering all major functionality
-- Minimal dependencies, focus on standard library where possible
+## Automation
 
-### Testing
-
-- All features must have corresponding tests in `ansiblePlaybook_test.go`
-- Tests use table-driven patterns where applicable
-- Mock external dependencies (file system, command execution) for unit tests
-
-### Configuration
-
-- All Ansible options exposed through the `Config` struct
-- Options are plain struct fields set directly on `Playbook.Config`
-- Validation happens before command execution
-
-## Structure
-
-```text
-go.ansible/
-├── ansiblePlaybook.go       # Main playbook implementation
-├── ansiblePlaybook_test.go  # Test suite
-├── example_test.go          # Runnable usage examples
-├── go.mod                   # Go module dependencies
-├── lefthook.yml             # Local git hooks (gofmt, go vet, lint, gitleaks)
-├── REVIEW.md                # Code review guidelines (ai-claude-review workflow)
-└── .github/
-    └── workflows/
-        ├── pull-request.yml      # CI, lint, secret scan, Claude review on PRs
-        ├── merge.yml             # CI plus secret scan on push to main
-        ├── nightly-security.yml  # Daily CodeQL, Trivy, secret scan
-        └── tag.yml               # Build, test, GitHub Release on SemVer tag
-```
-
-Event-focused workflows call reusables from `arillso/.github`. Install
-local hooks once with `lefthook install`; they run on commit and push.
-
-## Do Not
-
-- Do not add external dependencies unless absolutely necessary
-- Do not modify the public API without considering backwards compatibility
-- Do not add OS-specific code without proper build tags
-- Do not commit debug code or temporary test files
-- Do not add complex abstractions - keep the API simple and focused
+- `lefthook install` once per clone: pre-commit runs prettier, yamllint, markdownlint, `gofmt`, `go vet`, actionlint
+  and gitleaks; pre-push runs `go test ./...` and a full gitleaks scan.
+- Pull requests run the `arillso/.github` reusables for Go CI, lint, secret and dependency scans, plus a Claude
+  review. Before reviewing or preparing a PR, read `REVIEW.md`; the review job follows it.
+- A SemVer tag `vX.Y.Z` triggers `tag.yml`: build, test, GitHub Release and SBOM.
