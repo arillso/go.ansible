@@ -6,6 +6,8 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 - Go >= 1.27.4 (the `go` directive in `go.mod`)
 - Git
+- [lefthook](https://github.com/evilmartians/lefthook) plus the tools its hooks call: Node.js (`npx`), yamllint,
+  gitleaks >= 8.18 and actionlint
 
 ## Development Setup
 
@@ -17,16 +19,20 @@ cd go.ansible
 git remote add upstream https://github.com/arillso/go.ansible.git
 ```
 
-### 2. Install Dependencies
+### 2. Install Dependencies and Git Hooks
 
 ```bash
 go mod download
+lefthook install
 ```
+
+`lefthook install` registers the Git hooks from `lefthook.yml`: pre-commit runs prettier, yamllint, markdownlint,
+`gofmt`, `go vet`, actionlint and gitleaks; pre-push runs `go test ./...` and a full gitleaks scan.
 
 ### 3. Create a Branch
 
 ```bash
-git checkout -b feature/your-feature-name
+git checkout -b feat/your-feature-name
 # or
 git checkout -b fix/issue-description
 ```
@@ -79,16 +85,21 @@ make build
 
 ### Commit Messages
 
-Write clear, descriptive commit messages:
+Use [Conventional Commits](https://www.conventionalcommits.org/) format:
 
 ```text
-Brief summary (50 chars or less)
+type(scope): brief summary
 
-- Detailed description with bullet points
-- Reference related issues
+Body explaining the why, not the what.
+Reference related issues.
 
 Fixes #123
 ```
+
+Where `type` is one of: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `chore`. Mark a breaking change with `!`
+after the type or scope (for example `feat(playbook)!: remove GatherSubset`) and a `BREAKING CHANGE:` footer; it ships
+in a major version. The pull request title follows the same format, for example
+`fix(playbook): pass only flags ansible-playbook supports`.
 
 ### Pull Request Process
 
@@ -111,14 +122,17 @@ Fixes #123
 **Note**: Only maintainers can create releases.
 
 1. Update `CHANGELOG.md` - move items from `[Unreleased]` to new version
-2. Create and push tag:
+2. Create and push a tag matching `vX.Y.Z` (or `vX.Y.Z-<pre>` for a pre-release); other names do not trigger a
+   release:
 
 ```bash
 git tag v1.2.1
 git push origin v1.2.1
 ```
 
-GitHub Actions automatically creates a GitHub Release.
+The `tag.yml` workflow builds and tests the module, then creates a GitHub Release whose notes are the matching
+`## [X.Y.Z]` section of `CHANGELOG.md`, plus an SBOM. Without such a section, the release gets GitHub's generated
+notes instead.
 
 ## Getting Help
 
