@@ -224,6 +224,8 @@ type Config struct {
 	// Stdout is an *os.File (e.g. the process stdout), not for custom writers.
 	// Color is not forced when NO_COLOR, or ANSIBLE_NOCOLOR if NO_COLOR is unset,
 	// is true (ExtraEnv first, then the process environment), as in Ansible.
+	// An ANSIBLE_FORCE_COLOR set by the caller still wins, and nocolor from
+	// ansible.cfg is not read; set NoColor to turn color off in both cases.
 	NoColor bool
 
 	// Vault options
