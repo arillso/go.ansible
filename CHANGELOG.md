@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Exec` restores `PrivateKeyFile`/`VaultPasswordFile` and resets temp-file tracking, so a
   reused `Playbook` does not pass deleted paths
 - `NoColor` removes an inherited `ANSIBLE_FORCE_COLOR`; color is forced only when `Stdout` is an `*os.File`
+- `ANSIBLE_FORCE_COLOR=1` is no longer added when `NO_COLOR`, or `ANSIBLE_NOCOLOR` if `NO_COLOR`
+  is unset, is true in `ExtraEnv` or the process environment; the added variable used to
+  override them. An `ANSIBLE_FORCE_COLOR` set by the caller still wins, as in Ansible
 - Encrypted PKCS#8 keys (`BEGIN ENCRYPTED PRIVATE KEY`) are accepted
 - Unreadable inventory files fail validation
 

@@ -222,6 +222,10 @@ type Config struct {
 	// NoColor disables colored output: it sets ANSIBLE_NOCOLOR=1 and drops any
 	// inherited ANSIBLE_FORCE_COLOR. Without NoColor, color is forced only when
 	// Stdout is an *os.File (e.g. the process stdout), not for custom writers.
+	// Color is not forced when NO_COLOR, or ANSIBLE_NOCOLOR if NO_COLOR is unset,
+	// is true (ExtraEnv first, then the process environment), as in Ansible.
+	// An ANSIBLE_FORCE_COLOR set by the caller still wins, and nocolor from
+	// ansible.cfg is not read; set NoColor to turn color off in both cases.
 	NoColor bool
 
 	// Vault options
@@ -662,9 +666,10 @@ func (p *Playbook) commandEnv(stdout io.Writer, envVars []string) []string {
 	env = append(env, "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
 	if p.Config.NoColor {
 		env = append(env, "ANSIBLE_NOCOLOR=1")
-	} else if _, isFile := stdout.(*os.File); isFile {
+	} else if _, isFile := stdout.(*os.File); isFile && !colorDisabledByEnv(p.Config.ExtraEnv) {
 		// ponytail: *os.File, not a TTY check; keeps color in CI logs (pipes)
-		// while custom writers such as bytes.Buffer get plain text.
+		// while custom writers such as bytes.Buffer get plain text. A true
+		// NO_COLOR or ANSIBLE_NOCOLOR skips it, since FORCE would override them.
 		env = append(env, "ANSIBLE_FORCE_COLOR=1")
 	}
 	if p.Config.GalaxyAPIKey != "" {
@@ -680,6 +685,29 @@ func (p *Playbook) commandEnv(stdout io.Writer, envVars []string) []string {
 		env = append(env, k+"="+p.Config.ExtraEnv[k])
 	}
 	return env
+}
+
+// colorDisabledByEnv reports whether Ansible's nocolor setting is true from
+// the environment. Like Ansible, a defined NO_COLOR (even empty) wins over
+// ANSIBLE_NOCOLOR. A key in extra (Config.ExtraEnv) wins over the process
+// environment. Values are read as Ansible booleans: y, yes, on, 1, true, t
+// (case-insensitive).
+func colorDisabledByEnv(extra map[string]string) bool {
+	lookup := func(k string) (string, bool) {
+		if v, ok := extra[k]; ok {
+			return v, true
+		}
+		return os.LookupEnv(k)
+	}
+	v, ok := lookup("NO_COLOR")
+	if !ok {
+		v, _ = lookup("ANSIBLE_NOCOLOR")
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "y", "yes", "on", "1", "true", "t":
+		return true
+	}
+	return false
 }
 
 // runCommands executes the given commands sequentially.
