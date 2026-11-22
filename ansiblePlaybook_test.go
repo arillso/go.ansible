@@ -2737,7 +2737,8 @@ func unsetColorEnv(t *testing.T) {
 }
 
 // TestColorDisabledByEnv verifies NO_COLOR and ANSIBLE_NOCOLOR are read as
-// Ansible booleans, with ExtraEnv taking precedence over the process environment.
+// Ansible booleans, a defined NO_COLOR wins over ANSIBLE_NOCOLOR, and ExtraEnv
+// takes precedence over the process environment.
 func TestColorDisabledByEnv(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -2752,7 +2753,10 @@ func TestColorDisabledByEnv(t *testing.T) {
 		{name: "NO_COLOR=0", env: map[string]string{"NO_COLOR": "0"}, want: false},
 		{name: "NO_COLOR empty", env: map[string]string{"NO_COLOR": ""}, want: false},
 		{name: "NO_COLOR=foo", env: map[string]string{"NO_COLOR": "foo"}, want: false},
-		{name: "one true is enough", env: map[string]string{"ANSIBLE_NOCOLOR": "0", "NO_COLOR": "1"}, want: true},
+		{name: "NO_COLOR true wins", env: map[string]string{"ANSIBLE_NOCOLOR": "0", "NO_COLOR": "1"}, want: true},
+		{name: "NO_COLOR false wins", env: map[string]string{"ANSIBLE_NOCOLOR": "1", "NO_COLOR": "0"}, want: false},
+		{name: "NO_COLOR empty wins", env: map[string]string{"ANSIBLE_NOCOLOR": "1", "NO_COLOR": ""}, want: false},
+		{name: "ExtraEnv NO_COLOR wins over process ANSIBLE_NOCOLOR", env: map[string]string{"ANSIBLE_NOCOLOR": "1"}, extra: map[string]string{"NO_COLOR": "0"}, want: false},
 		{name: "ExtraEnv sets", extra: map[string]string{"NO_COLOR": "1"}, want: true},
 		{name: "ExtraEnv overrides", env: map[string]string{"NO_COLOR": "1"}, extra: map[string]string{"NO_COLOR": "0"}, want: false},
 	}

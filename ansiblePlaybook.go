@@ -222,8 +222,8 @@ type Config struct {
 	// NoColor disables colored output: it sets ANSIBLE_NOCOLOR=1 and drops any
 	// inherited ANSIBLE_FORCE_COLOR. Without NoColor, color is forced only when
 	// Stdout is an *os.File (e.g. the process stdout), not for custom writers.
-	// Color is not forced when NO_COLOR or ANSIBLE_NOCOLOR (ExtraEnv first, then
-	// the process environment) is true.
+	// Color is not forced when NO_COLOR, or ANSIBLE_NOCOLOR if NO_COLOR is unset,
+	// is true (ExtraEnv first, then the process environment), as in Ansible.
 	NoColor bool
 
 	// Vault options
@@ -685,19 +685,25 @@ func (p *Playbook) commandEnv(stdout io.Writer, envVars []string) []string {
 	return env
 }
 
-// colorDisabledByEnv reports whether NO_COLOR or ANSIBLE_NOCOLOR is true.
-// A key in extra (Config.ExtraEnv) wins over the process environment. Values
-// are read as Ansible booleans: y, yes, on, 1, true, t (case-insensitive).
+// colorDisabledByEnv reports whether Ansible's nocolor setting is true from
+// the environment. Like Ansible, a defined NO_COLOR (even empty) wins over
+// ANSIBLE_NOCOLOR. A key in extra (Config.ExtraEnv) wins over the process
+// environment. Values are read as Ansible booleans: y, yes, on, 1, true, t
+// (case-insensitive).
 func colorDisabledByEnv(extra map[string]string) bool {
-	for _, k := range []string{"ANSIBLE_NOCOLOR", "NO_COLOR"} {
-		v, ok := extra[k]
-		if !ok {
-			v = os.Getenv(k)
+	lookup := func(k string) (string, bool) {
+		if v, ok := extra[k]; ok {
+			return v, true
 		}
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "y", "yes", "on", "1", "true", "t":
-			return true
-		}
+		return os.LookupEnv(k)
+	}
+	v, ok := lookup("NO_COLOR")
+	if !ok {
+		v, _ = lookup("ANSIBLE_NOCOLOR")
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "y", "yes", "on", "1", "true", "t":
+		return true
 	}
 	return false
 }
