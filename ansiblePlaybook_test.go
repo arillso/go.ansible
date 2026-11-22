@@ -2590,19 +2590,25 @@ func TestInspectionFlagsKeepOptions(t *testing.T) {
 }
 
 // TestRunCommandsContextError verifies that a killed command keeps ctx.Err()
-// in the error chain.
+// in the error chain. runCmd is faked to cancel the context and return an
+// exit error, so no process starts.
+// runCmd is package-global mutable state — this test must NOT run with
+// t.Parallel() (and neither may any other test touching runCmd).
 func TestRunCommandsContextError(t *testing.T) {
-	if _, err := exec.LookPath("sleep"); err != nil {
-		t.Skip("sleep not available")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	orig := runCmd
+	runCmd = func(*exec.Cmd) error {
+		cancel()
+		return &exec.ExitError{}
+	}
+	t.Cleanup(func() { runCmd = orig })
 
 	pb := NewPlaybook()
 	pb.Stdout, pb.Stderr = &bytes.Buffer{}, &bytes.Buffer{}
-	err := pb.runCommands(ctx, []*exec.Cmd{exec.CommandContext(ctx, "sleep", "5")})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected context.DeadlineExceeded in chain, got: %v", err)
+	err := pb.runCommands(ctx, []*exec.Cmd{exec.CommandContext(ctx, "ansible-playbook")})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled in chain, got: %v", err)
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {

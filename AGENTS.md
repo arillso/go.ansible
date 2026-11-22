@@ -27,8 +27,8 @@ struct. Consumers embed it, so every exported identifier is public API.
   that carries a secret goes into that map.
 - **Temp files.** `PrivateKey` and `VaultPassword` are written to `Config.TempDir` with mode `0600`; `Exec` restores
   the caller's `PrivateKeyFile`/`VaultPasswordFile` afterwards so a reused `Playbook` does not point at a deleted file.
-- **Global test state.** `chmodFile` is a package variable that tests swap out. Tests touching it run without
-  `t.Parallel()`.
+- **Global test state.** `chmodFile` and `runCmd` are package variables that tests swap out. Tests touching them run
+  without `t.Parallel()`.
 - **Examples are tests.** The `// Output:` lines in `example_test.go` are checked by `go test`; a change to argument
   order or masking updates them.
 - **Go directive.** Raising `go` in `go.mod` raises the minimum Go version for every consumer.

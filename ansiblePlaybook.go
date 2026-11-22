@@ -696,7 +696,7 @@ func (p *Playbook) runCommands(ctx context.Context, cmds []*exec.Cmd) error {
 		if p.Debug {
 			p.trace(cmd)
 		}
-		if err := cmd.Run(); err != nil {
+		if err := runCmd(cmd); err != nil {
 			// A cancelled context kills the process; keep ctx.Err() in the
 			// chain so callers can match context.Canceled/DeadlineExceeded.
 			// Start already returns ctx.Err() when ctx was done beforehand.
@@ -714,6 +714,11 @@ func (p *Playbook) runCommands(ctx context.Context, cmds []*exec.Cmd) error {
 	}
 	return nil
 }
+
+// runCmd is (*exec.Cmd).Run indirected through a package var so the error
+// handling of runCommands can be exercised in tests without starting a
+// process. Tests that swap it must not run in parallel.
+var runCmd = (*exec.Cmd).Run
 
 // validateInventory checks whether the inventory file or directory exists and
 // is readable. For inline inventories (containing a comma), it is assumed to be valid.
