@@ -244,10 +244,7 @@ func TestBuildCustomEnvVars(t *testing.T) {
 	cfg.FactCaching = "jsonfile"
 	cfg.FactCachingTimeout = 60
 
-	envVars, err := buildCustomEnvVars(&cfg)
-	if err != nil {
-		t.Fatalf("buildCustomEnvVars failed: %v", err)
-	}
+	envVars := buildCustomEnvVars(&cfg)
 	var foundConfig, foundFactCaching, foundFactCachingTimeout bool
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "ANSIBLE_CONFIG=") {
@@ -966,14 +963,41 @@ func TestExecNonExistentGalaxyFile(t *testing.T) {
 	}
 }
 
-// TestBuildCustomEnvVarsConfigFileNotFound verifies error for missing config file.
-func TestBuildCustomEnvVarsConfigFileNotFound(t *testing.T) {
-	cfg := Config{
-		ConfigFile: "/nonexistent/ansible.cfg",
+// TestCommandStringsConfigFileNotFound verifies that CommandStrings fails like
+// Exec when ConfigFile does not exist.
+func TestCommandStringsConfigFileNotFound(t *testing.T) {
+	playbookFile := filepath.Join(t.TempDir(), "test.yml")
+	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("Failed to write playbook: %v", err)
 	}
-	_, err := buildCustomEnvVars(&cfg)
+
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.ConfigFile = "/nonexistent/ansible.cfg"
+
+	_, err := pb.CommandStrings(context.Background())
 	if err == nil {
 		t.Fatal("expected error for non-existent config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "config file not found") {
+		t.Errorf("expected 'config file not found' error, got: %v", err)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected error to wrap os.ErrNotExist, got: %v", err)
+	}
+}
+
+// TestBuildCommandsConfigFileBeforeGalaxy verifies that a missing ConfigFile
+// is reported before a missing galaxy file.
+func TestBuildCommandsConfigFileBeforeGalaxy(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"site.yml"}
+	pb.Config.ConfigFile = "/nonexistent/ansible.cfg"
+	pb.Config.GalaxyFile = "/nonexistent/requirements.yml"
+
+	_, err := pb.buildCommands(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "config file not found") {
 		t.Errorf("expected 'config file not found' error, got: %v", err)
@@ -983,10 +1007,7 @@ func TestBuildCustomEnvVarsConfigFileNotFound(t *testing.T) {
 // TestBuildCustomEnvVarsNoConfigFile verifies no error when ConfigFile is empty.
 func TestBuildCustomEnvVarsNoConfigFile(t *testing.T) {
 	cfg := Config{}
-	envVars, err := buildCustomEnvVars(&cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	envVars := buildCustomEnvVars(&cfg)
 	if len(envVars) != 0 {
 		t.Errorf("expected no env vars, got %v", envVars)
 	}
@@ -997,10 +1018,7 @@ func TestBuildCustomEnvVarsFactPath(t *testing.T) {
 	cfg := Config{
 		FactPath: "/custom/facts",
 	}
-	envVars, err := buildCustomEnvVars(&cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	envVars := buildCustomEnvVars(&cfg)
 	found := false
 	for _, env := range envVars {
 		if env == "ANSIBLE_FACT_PATH=/custom/facts" {
@@ -2118,10 +2136,7 @@ func TestExtraEnv(t *testing.T) {
 	// Simulate the env wiring that runCommands does
 	cmd := cmds[0]
 	cmd.Env = append(os.Environ(), "ANSIBLE_GALAXY_DISPLAY_PROGRESS=0")
-	envVars, err := buildCustomEnvVars(&pb.Config)
-	if err != nil {
-		t.Fatalf("buildCustomEnvVars failed: %v", err)
-	}
+	envVars := buildCustomEnvVars(&pb.Config)
 	cmd.Env = append(cmd.Env, envVars...)
 	for k, v := range pb.Config.ExtraEnv {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -2242,10 +2257,7 @@ func TestCommandStringsNoPlaybooks(t *testing.T) {
 // ANSIBLE_CALLBACKS_ENABLED (ansible-playbook has no --callbacks-enabled flag).
 func TestCallbacksEnabled(t *testing.T) {
 	cfg := Config{CallbacksEnabled: "timer"}
-	env, err := buildCustomEnvVars(&cfg)
-	if err != nil {
-		t.Fatalf("buildCustomEnvVars failed: %v", err)
-	}
+	env := buildCustomEnvVars(&cfg)
 	if !slices.Contains(env, "ANSIBLE_CALLBACKS_ENABLED=timer") {
 		t.Errorf("expected ANSIBLE_CALLBACKS_ENABLED=timer, got: %v", env)
 	}
@@ -2354,10 +2366,7 @@ func TestOutputCallback(t *testing.T) {
 	cfg := Config{
 		OutputCallback: "json",
 	}
-	envVars, err := buildCustomEnvVars(&cfg)
-	if err != nil {
-		t.Fatalf("buildCustomEnvVars failed: %v", err)
-	}
+	envVars := buildCustomEnvVars(&cfg)
 
 	found := false
 	for _, env := range envVars {
@@ -2374,10 +2383,7 @@ func TestOutputCallback(t *testing.T) {
 // TestOutputCallbackEmpty verifies that empty OutputCallback does not set the env var.
 func TestOutputCallbackEmpty(t *testing.T) {
 	cfg := Config{}
-	envVars, err := buildCustomEnvVars(&cfg)
-	if err != nil {
-		t.Fatalf("buildCustomEnvVars failed: %v", err)
-	}
+	envVars := buildCustomEnvVars(&cfg)
 
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "ANSIBLE_STDOUT_CALLBACK=") {
@@ -2535,10 +2541,7 @@ func TestUnsupportedFlagsMovedToEnv(t *testing.T) {
 		}
 	}
 
-	env, err := buildCustomEnvVars(&pb.Config)
-	if err != nil {
-		t.Fatalf("buildCustomEnvVars failed: %v", err)
-	}
+	env := buildCustomEnvVars(&pb.Config)
 	for _, want := range []string{"ANSIBLE_STRATEGY=free", "ANSIBLE_CALLBACKS_ENABLED=timer",
 		"ANSIBLE_POLL_INTERVAL=3", "ANSIBLE_ANY_ERRORS_FATAL=True", "ANSIBLE_SSH_TRANSFER_METHOD=sftp"} {
 		if !slices.Contains(env, want) {
@@ -2738,20 +2741,25 @@ func TestValidateInventoryUnreadable(t *testing.T) {
 
 // TestCommandStringsShowsEnvVars verifies that options passed as ANSIBLE_*
 // environment variables appear before the command line, with the galaxy
-// token masked and without checking that ConfigFile exists.
+// token masked.
 func TestCommandStringsShowsEnvVars(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "ansible.cfg")
+	if err := os.WriteFile(cfgFile, []byte("[defaults]\n"), 0o600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
 	pb := NewPlaybook()
 	pb.Config.Playbooks = []string{"arillso.test.site"}
 	pb.Config.Inventories = []string{"localhost,"}
 	pb.Config.StrategyPlugin = "free"
-	pb.Config.ConfigFile = "/nonexistent/ansible.cfg"
+	pb.Config.ConfigFile = cfgFile
 	pb.Config.GalaxyAPIKey = "secret-token-123"
 
 	cmds, err := pb.CommandStrings(context.Background())
 	if err != nil {
 		t.Fatalf("CommandStrings failed: %v", err)
 	}
-	want := "ANSIBLE_GALAXY_TOKEN=****** ANSIBLE_CONFIG=/nonexistent/ansible.cfg ANSIBLE_STRATEGY=free " +
+	want := "ANSIBLE_GALAXY_TOKEN=****** ANSIBLE_CONFIG=" + cfgFile + " ANSIBLE_STRATEGY=free " +
 		"ansible-playbook --inventory localhost, --forks 5 arillso.test.site"
 	if got := cmds[len(cmds)-1]; got != want {
 		t.Errorf("CommandStrings = %q, want %q", got, want)
