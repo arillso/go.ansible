@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CommandStrings` masks sensitive values (`--extra-vars`, `--private-key`,
   `--vault-password-file`) like the debug trace
 - Color is no longer forced when `Stdout` is a custom writer such as `bytes.Buffer`
+- `CommandStrings` and the debug trace prefix each command with the `ANSIBLE_*` variables set
+  from `Config` (e.g. `ANSIBLE_STRATEGY=free ansible-playbook ...`), so options passed via
+  environment are visible again; `ANSIBLE_GALAXY_TOKEN` is masked
 
 ### Fixed
 

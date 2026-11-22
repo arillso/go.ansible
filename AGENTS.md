@@ -23,8 +23,9 @@ struct. Consumers embed it, so every exported identifier is public API.
   `buildCustomEnvVars` as `ANSIBLE_*` variables (#133).
 - **Play keywords.** Options that exist only as play keywords have neither flag nor variable;
   `validateUnsupported` rejects them so `Exec` fails instead of silently ignoring them.
-- **Secrets in output.** `trace` and `CommandStrings` mask values of flags listed in `sensitiveFlags`. A new flag
-  that carries a secret goes into that map.
+- **Secrets in output.** `trace` and `CommandStrings` show the `ANSIBLE_*` variables from `Config` before the command
+  and mask values of flags and variables listed in `sensitiveFlags`. A new flag or variable that carries a secret goes
+  into that map.
 - **Temp files.** `PrivateKey` and `VaultPassword` are written to `Config.TempDir` with mode `0600`; `Exec` restores
   the caller's `PrivateKeyFile`/`VaultPasswordFile` afterwards so a reused `Playbook` does not point at a deleted file.
 - **Global test state.** `chmodFile` is a package variable that tests swap out. Tests touching it run without

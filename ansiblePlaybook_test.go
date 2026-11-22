@@ -2729,3 +2729,42 @@ func TestValidateInventoryUnreadable(t *testing.T) {
 		t.Errorf("expected 'not readable' error, got: %v", err)
 	}
 }
+
+// TestCommandStringsShowsEnvVars verifies that options passed as ANSIBLE_*
+// environment variables appear before the command line, with the galaxy
+// token masked and without checking that ConfigFile exists.
+func TestCommandStringsShowsEnvVars(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.Playbooks = []string{"arillso.test.site"}
+	pb.Config.Inventories = []string{"localhost,"}
+	pb.Config.StrategyPlugin = "free"
+	pb.Config.ConfigFile = "/nonexistent/ansible.cfg"
+	pb.Config.GalaxyAPIKey = "secret-token-123"
+
+	cmds, err := pb.CommandStrings(context.Background())
+	if err != nil {
+		t.Fatalf("CommandStrings failed: %v", err)
+	}
+	want := "ANSIBLE_GALAXY_TOKEN=****** ANSIBLE_CONFIG=/nonexistent/ansible.cfg ANSIBLE_STRATEGY=free " +
+		"ansible-playbook --inventory localhost, --forks 5 arillso.test.site"
+	if got := cmds[len(cmds)-1]; got != want {
+		t.Errorf("CommandStrings = %q, want %q", got, want)
+	}
+}
+
+// TestTraceShowsEnvVars verifies that the debug trace shows the ANSIBLE_*
+// environment variables before the command and masks the galaxy token.
+func TestTraceShowsEnvVars(t *testing.T) {
+	pb := NewPlaybook()
+	pb.Config.StrategyPlugin = "free"
+	pb.Config.GalaxyAPIKey = "secret-token-123"
+	var buf bytes.Buffer
+	pb.TraceOutput = &buf
+
+	pb.trace(exec.Command("ansible-playbook", "site.yml"))
+
+	want := "$ ANSIBLE_GALAXY_TOKEN=****** ANSIBLE_STRATEGY=free ansible-playbook site.yml\n"
+	if got := buf.String(); got != want {
+		t.Errorf("trace output = %q, want %q", got, want)
+	}
+}
