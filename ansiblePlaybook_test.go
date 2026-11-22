@@ -2703,6 +2703,7 @@ func TestExecRestoresSecretFilePaths(t *testing.T) {
 // TestCommandEnvColor verifies NoColor wins over an inherited
 // ANSIBLE_FORCE_COLOR and that color is not forced for custom writers.
 func TestCommandEnvColor(t *testing.T) {
+	unsetColorEnv(t)
 	t.Setenv("ANSIBLE_FORCE_COLOR", "1")
 
 	pb := NewPlaybook()
@@ -2723,6 +2724,89 @@ func TestCommandEnvColor(t *testing.T) {
 	if slices.Contains(pb.commandEnv(&bytes.Buffer{}, nil), "ANSIBLE_FORCE_COLOR=1") {
 		t.Error("expected no forced color for bytes.Buffer stdout")
 	}
+}
+
+// unsetColorEnv clears the color variables for one test; t.Setenv restores
+// them afterwards. Tests using it must not call t.Parallel().
+func unsetColorEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"NO_COLOR", "ANSIBLE_NOCOLOR", "ANSIBLE_FORCE_COLOR"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k) //nolint:errcheck // restored by t.Setenv
+	}
+}
+
+// TestColorDisabledByEnv verifies NO_COLOR and ANSIBLE_NOCOLOR are read as
+// Ansible booleans, with ExtraEnv taking precedence over the process environment.
+func TestColorDisabledByEnv(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   map[string]string
+		extra map[string]string
+		want  bool
+	}{
+		{name: "nothing set", want: false},
+		{name: "NO_COLOR=1", env: map[string]string{"NO_COLOR": "1"}, want: true},
+		{name: "ANSIBLE_NOCOLOR=yes", env: map[string]string{"ANSIBLE_NOCOLOR": "yes"}, want: true},
+		{name: "case and whitespace", env: map[string]string{"NO_COLOR": " TRUE "}, want: true},
+		{name: "NO_COLOR=0", env: map[string]string{"NO_COLOR": "0"}, want: false},
+		{name: "NO_COLOR empty", env: map[string]string{"NO_COLOR": ""}, want: false},
+		{name: "NO_COLOR=foo", env: map[string]string{"NO_COLOR": "foo"}, want: false},
+		{name: "one true is enough", env: map[string]string{"ANSIBLE_NOCOLOR": "0", "NO_COLOR": "1"}, want: true},
+		{name: "ExtraEnv sets", extra: map[string]string{"NO_COLOR": "1"}, want: true},
+		{name: "ExtraEnv overrides", env: map[string]string{"NO_COLOR": "1"}, extra: map[string]string{"NO_COLOR": "0"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unsetColorEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			if got := colorDisabledByEnv(tt.extra); got != tt.want {
+				t.Errorf("colorDisabledByEnv() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCommandEnvColorRespectsEnv verifies color is not forced when the
+// environment disables it, and that an inherited ANSIBLE_FORCE_COLOR stays.
+func TestCommandEnvColorRespectsEnv(t *testing.T) {
+	isForce := func(kv string) bool { return strings.HasPrefix(kv, "ANSIBLE_FORCE_COLOR=") }
+
+	t.Run("NO_COLOR suppresses forced color", func(t *testing.T) {
+		unsetColorEnv(t)
+		t.Setenv("NO_COLOR", "1")
+		if slices.ContainsFunc(NewPlaybook().commandEnv(os.Stdout, nil), isForce) {
+			t.Error("ANSIBLE_FORCE_COLOR set despite NO_COLOR=1")
+		}
+	})
+
+	t.Run("ExtraEnv overrides process NO_COLOR", func(t *testing.T) {
+		unsetColorEnv(t)
+		t.Setenv("NO_COLOR", "1")
+		pb := NewPlaybook()
+		pb.Config.ExtraEnv = map[string]string{"NO_COLOR": "0"}
+		if !slices.Contains(pb.commandEnv(os.Stdout, nil), "ANSIBLE_FORCE_COLOR=1") {
+			t.Error("expected forced color when ExtraEnv sets NO_COLOR=0")
+		}
+	})
+
+	t.Run("inherited ANSIBLE_FORCE_COLOR is kept once", func(t *testing.T) {
+		unsetColorEnv(t)
+		t.Setenv("ANSIBLE_FORCE_COLOR", "1")
+		t.Setenv("NO_COLOR", "1")
+		env := NewPlaybook().commandEnv(os.Stdout, nil)
+		n := 0
+		for _, kv := range env {
+			if isForce(kv) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("expected exactly one ANSIBLE_FORCE_COLOR entry, got %d", n)
+		}
+	})
 }
 
 // TestValidateInventoryUnreadable verifies that an unreadable inventory fails validation.

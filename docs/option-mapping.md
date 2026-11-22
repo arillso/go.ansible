@@ -41,7 +41,8 @@ Order in the environment, later wins:
 
 1. Inherited process environment
 2. `ANSIBLE_GALAXY_DISPLAY_PROGRESS=0`, then color: `ANSIBLE_NOCOLOR=1` with `NoColor`, otherwise
-   `ANSIBLE_FORCE_COLOR=1` only when `Stdout` is an `*os.File`
+   `ANSIBLE_FORCE_COLOR=1` only when `Stdout` is an `*os.File` and neither `NO_COLOR` nor
+   `ANSIBLE_NOCOLOR` is true
 3. `ANSIBLE_GALAXY_TOKEN`
 4. The remaining variables from the table above, from `ConfigFile` to `SSHTransferMethod`
 5. `ExtraEnv`, sorted by key, so it can override everything before it
