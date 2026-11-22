@@ -22,20 +22,20 @@ Most fields map to one flag; the doc comment names it: "maps to ansible-playbook
 
 `ansible-playbook` has no flag for these, so they are set on the command environment.
 
-| Field                | Variable                                                                                |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `ConfigFile`         | `ANSIBLE_CONFIG` (`Exec` fails if the file is missing; `CommandStrings` does not check) |
-| `FactPath`           | `ANSIBLE_FACT_PATH`                                                                     |
-| `FactCaching`        | `ANSIBLE_FACT_CACHING`                                                                  |
-| `FactCachingTimeout` | `ANSIBLE_FACT_CACHING_TIMEOUT` (only when > 0)                                          |
-| `OutputCallback`     | `ANSIBLE_STDOUT_CALLBACK`                                                               |
-| `StrategyPlugin`     | `ANSIBLE_STRATEGY`                                                                      |
-| `CallbacksEnabled`   | `ANSIBLE_CALLBACKS_ENABLED`                                                             |
-| `PollInterval`       | `ANSIBLE_POLL_INTERVAL` (only when > 0)                                                 |
-| `AnyErrorsFatal`     | `ANSIBLE_ANY_ERRORS_FATAL=True`                                                         |
-| `SSHTransferMethod`  | `ANSIBLE_SSH_TRANSFER_METHOD`                                                           |
-| `GalaxyAPIKey`       | `ANSIBLE_GALAXY_TOKEN`                                                                  |
-| `NoColor`            | `ANSIBLE_NOCOLOR=1`, drops an inherited `ANSIBLE_FORCE_COLOR`                           |
+| Field                | Variable                                                                   |
+| -------------------- | -------------------------------------------------------------------------- |
+| `ConfigFile`         | `ANSIBLE_CONFIG` (`Exec` and `CommandStrings` fail if the file is missing) |
+| `FactPath`           | `ANSIBLE_FACT_PATH`                                                        |
+| `FactCaching`        | `ANSIBLE_FACT_CACHING`                                                     |
+| `FactCachingTimeout` | `ANSIBLE_FACT_CACHING_TIMEOUT` (only when > 0)                             |
+| `OutputCallback`     | `ANSIBLE_STDOUT_CALLBACK`                                                  |
+| `StrategyPlugin`     | `ANSIBLE_STRATEGY`                                                         |
+| `CallbacksEnabled`   | `ANSIBLE_CALLBACKS_ENABLED`                                                |
+| `PollInterval`       | `ANSIBLE_POLL_INTERVAL` (only when > 0)                                    |
+| `AnyErrorsFatal`     | `ANSIBLE_ANY_ERRORS_FATAL=True`                                            |
+| `SSHTransferMethod`  | `ANSIBLE_SSH_TRANSFER_METHOD`                                              |
+| `GalaxyAPIKey`       | `ANSIBLE_GALAXY_TOKEN`                                                     |
+| `NoColor`            | `ANSIBLE_NOCOLOR=1`, drops an inherited `ANSIBLE_FORCE_COLOR`              |
 
 Order in the environment, later wins:
 

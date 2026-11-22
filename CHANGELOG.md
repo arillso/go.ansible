@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CommandStrings` and the debug trace prefix each command with the `ANSIBLE_*` variables set
   from `Config` (e.g. `ANSIBLE_STRATEGY=free ansible-playbook ...`), so options passed via
   environment are visible again; `ANSIBLE_GALAXY_TOKEN` is masked
+- `CommandStrings` returns an error for a missing `ConfigFile` like `Exec`; `Exec` reports a
+  missing `ConfigFile` before a missing galaxy file, and the error wraps the `os.Stat` error
 
 ### Fixed
 

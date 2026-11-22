@@ -353,7 +353,7 @@ type Config struct {
 	AnyErrorsFatal bool
 	// ConfigFile is the path to an Ansible configuration file
 	// (sets the ANSIBLE_CONFIG environment variable).
-	// If set, the file must exist or Exec will return an error.
+	// If set, the file must exist or Exec and CommandStrings return an error.
 	ConfigFile string
 
 	// OutputCallback sets the ANSIBLE_STDOUT_CALLBACK environment variable,
@@ -576,6 +576,13 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 		cmds = append(cmds, p.versionCommand(ctx))
 	}
 
+	// Checked here so Exec and CommandStrings fail alike.
+	if p.Config.ConfigFile != "" {
+		if _, err := os.Stat(p.Config.ConfigFile); err != nil {
+			return nil, fmt.Errorf("config file not found: %s: %w", p.Config.ConfigFile, err)
+		}
+	}
+
 	// Galaxy commands (if GalaxyFile or GalaxyRequirementsFile is set)
 	if reqFile := p.Config.galaxyRequirementsFile(); reqFile != "" {
 		if _, err := os.Stat(reqFile); err != nil {
@@ -679,10 +686,7 @@ func (p *Playbook) commandEnv(stdout io.Writer, envVars []string) []string {
 // The context is already embedded in each exec.Cmd via exec.CommandContext;
 // it is used here only to attach ctx.Err() to the error of a killed command.
 func (p *Playbook) runCommands(ctx context.Context, cmds []*exec.Cmd) error {
-	envVars, err := buildCustomEnvVars(&p.Config)
-	if err != nil {
-		return fmt.Errorf("failed to build environment: %w", err)
-	}
+	envVars := buildCustomEnvVars(&p.Config)
 	stdout := p.Stdout
 	if stdout == nil {
 		stdout = os.Stdout
@@ -748,20 +752,9 @@ func validateInventory(inv string) error {
 	return nil
 }
 
-// buildCustomEnvVars constructs additional environment variables for Ansible.
-// It returns an error if ConfigFile is set but does not exist.
-func buildCustomEnvVars(cfg *Config) ([]string, error) {
-	if cfg.ConfigFile != "" {
-		if _, err := os.Stat(cfg.ConfigFile); err != nil {
-			return nil, fmt.Errorf("config file not found: %s", cfg.ConfigFile)
-		}
-	}
-	return customEnvVars(cfg), nil
-}
-
-// customEnvVars returns the ANSIBLE_* variables for options without a CLI flag,
-// without checking that ConfigFile exists.
-func customEnvVars(cfg *Config) []string {
+// buildCustomEnvVars returns the ANSIBLE_* variables for options without a
+// CLI flag. buildCommands checks that ConfigFile exists.
+func buildCustomEnvVars(cfg *Config) []string {
 	var env []string
 	if cfg.ConfigFile != "" {
 		env = append(env, "ANSIBLE_CONFIG="+cfg.ConfigFile)
@@ -987,7 +980,7 @@ func (p *Playbook) commandLine(cmd *exec.Cmd) string {
 	if p.Config.GalaxyAPIKey != "" {
 		line = append(line, "ANSIBLE_GALAXY_TOKEN="+p.Config.GalaxyAPIKey)
 	}
-	line = append(line, customEnvVars(&p.Config)...)
+	line = append(line, buildCustomEnvVars(&p.Config)...)
 	line = append(line, cmd.Args...)
 	return strings.Join(maskSensitiveArgs(line), " ")
 }
