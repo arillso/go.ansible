@@ -600,8 +600,11 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 
 // CommandStrings returns the command lines that would be executed, without running them.
 // This is useful for debugging, logging, or previewing the commands.
+// Each line starts with the ANSIBLE_* variables set from Config as KEY=VALUE,
+// e.g. "ANSIBLE_STRATEGY=free ansible-playbook ..."; ExtraEnv is not shown.
 // Values of sensitive flags (--extra-vars, --private-key, --vault-password-file)
-// are masked as in debug trace output; no temporary files are written.
+// and ANSIBLE_GALAXY_TOKEN are masked as in debug trace output; no temporary
+// files are written.
 // This method works on a shallow copy of the Playbook so it does not mutate Config.
 func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 	// Work on a shallow copy so resolvePlaybooks does not mutate the caller's Config.
@@ -633,7 +636,7 @@ func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 
 	result := make([]string, len(cmds))
 	for i, cmd := range cmds {
-		result[i] = strings.Join(maskSensitiveArgs(cmd.Args), " ")
+		result[i] = cp.commandLine(cmd)
 	}
 	return result, nil
 }
@@ -743,11 +746,19 @@ func validateInventory(inv string) error {
 // buildCustomEnvVars constructs additional environment variables for Ansible.
 // It returns an error if ConfigFile is set but does not exist.
 func buildCustomEnvVars(cfg *Config) ([]string, error) {
-	var env []string
 	if cfg.ConfigFile != "" {
 		if _, err := os.Stat(cfg.ConfigFile); err != nil {
 			return nil, fmt.Errorf("config file not found: %s", cfg.ConfigFile)
 		}
+	}
+	return customEnvVars(cfg), nil
+}
+
+// customEnvVars returns the ANSIBLE_* variables for options without a CLI flag,
+// without checking that ConfigFile exists.
+func customEnvVars(cfg *Config) []string {
+	var env []string
+	if cfg.ConfigFile != "" {
 		env = append(env, "ANSIBLE_CONFIG="+cfg.ConfigFile)
 	}
 	if cfg.FactPath != "" {
@@ -778,7 +789,7 @@ func buildCustomEnvVars(cfg *Config) ([]string, error) {
 	if cfg.SSHTransferMethod != "" {
 		env = append(env, "ANSIBLE_SSH_TRANSFER_METHOD="+cfg.SSHTransferMethod)
 	}
-	return env, nil
+	return env
 }
 
 // argOption represents a single command-line flag option.
@@ -941,7 +952,8 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 	return exec.CommandContext(ctx, "ansible-playbook", args...) //nolint:gosec // intentional subprocess execution; args are derived from trusted configuration
 }
 
-// sensitiveFlags lists command-line flags whose values should be masked in trace output.
+// sensitiveFlags lists command-line flags and environment variables whose
+// values should be masked in trace output.
 var sensitiveFlags = map[string]bool{
 	"--extra-vars":          true,
 	"-e":                    true,
@@ -949,6 +961,7 @@ var sensitiveFlags = map[string]bool{
 	"--vault-pass-file":     true,
 	"--private-key":         true,
 	"--api-key":             true,
+	"ANSIBLE_GALAXY_TOKEN":  true,
 }
 
 // trace prints the full command line to the configured TraceOutput (or os.Stdout).
@@ -958,7 +971,20 @@ func (p *Playbook) trace(cmd *exec.Cmd) {
 	if w == nil {
 		w = os.Stdout
 	}
-	_, _ = fmt.Fprintf(w, "$ %s\n", strings.Join(maskSensitiveArgs(cmd.Args), " "))
+	_, _ = fmt.Fprintf(w, "$ %s\n", p.commandLine(cmd))
+}
+
+// commandLine renders cmd for trace and CommandStrings: the ANSIBLE_* variables
+// set from Config (in environment order, see commandEnv) followed by the
+// arguments, with sensitive values masked.
+func (p *Playbook) commandLine(cmd *exec.Cmd) string {
+	var line []string
+	if p.Config.GalaxyAPIKey != "" {
+		line = append(line, "ANSIBLE_GALAXY_TOKEN="+p.Config.GalaxyAPIKey)
+	}
+	line = append(line, customEnvVars(&p.Config)...)
+	line = append(line, cmd.Args...)
+	return strings.Join(maskSensitiveArgs(line), " ")
 }
 
 // maskSensitiveArgs returns a copy of args with values of sensitive flags replaced by "******".

@@ -46,6 +46,9 @@ Order in the environment, later wins:
 4. The remaining variables from the table above, from `ConfigFile` to `SSHTransferMethod`
 5. `ExtraEnv`, sorted by key, so it can override everything before it
 
+`trace` and `CommandStrings` show steps 3 and 4 as a `KEY=VALUE` prefix before each command, with
+`ANSIBLE_GALAXY_TOKEN` masked. The inherited environment, the color and progress variables and `ExtraEnv` are not shown.
+
 ## Temp files
 
 | Field           | Effect                                                                                                                                                                                                        |

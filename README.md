@@ -107,7 +107,8 @@ if err := pb.Exec(ctx); err != nil { // returns a context error when cancelled
 ```
 
 Preview the generated command without running Ansible via
-`pb.CommandStrings(ctx)`.
+`pb.CommandStrings(ctx)`. Options passed as environment variables appear as a
+`KEY=VALUE` prefix, e.g. `ANSIBLE_STRATEGY=free ansible-playbook ...`.
 
 ## Features
 
