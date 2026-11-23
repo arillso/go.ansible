@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -264,10 +265,11 @@ type Config struct {
 	// the --role-file and --requirements-file value unless overridden by
 	// GalaxyRequirementsFile.
 	GalaxyFile string
-	// GalaxyAPIKey is the Galaxy API token. It is written to a temporary token
-	// file in TempDir (mode 0600) whose path is set as the
+	// GalaxyAPIKey is the Galaxy API token. When GalaxyFile or
+	// GalaxyRequirementsFile triggers a galaxy install, it is written to a
+	// temporary token file in TempDir (mode 0600) whose path is set as the
 	// ANSIBLE_GALAXY_TOKEN_PATH environment variable, which ansible-galaxy
-	// reads; it is never passed as a flag.
+	// reads; it is never passed as a flag. Must be valid UTF-8.
 	GalaxyAPIKey string
 	// GalaxyAPIServerURL is the Galaxy server URL
 	// (maps to ansible-galaxy --server).
@@ -555,9 +557,13 @@ func (p *Playbook) prepareTempFiles() error {
 		p.Config.VaultPasswordFile = file
 		p.tempFiles = append(p.tempFiles, file)
 	}
-	if p.Config.GalaxyAPIKey != "" {
-		// ansible-galaxy loads the token file as YAML ({token: ...}); %q yields
-		// a double-quoted scalar YAML accepts.
+	if p.Config.galaxyTokenWanted() {
+		// ansible-galaxy loads the token file as YAML ({token: ...}); for valid
+		// UTF-8, %q yields a double-quoted scalar YAML reads back unchanged
+		// (invalid bytes would become \xNN, which YAML maps to U+00NN).
+		if !utf8.ValidString(p.Config.GalaxyAPIKey) {
+			return errors.New("could not create galaxy token file: GalaxyAPIKey is not valid UTF-8")
+		}
 		file, err := writeTempFile(p.Config.TempDir, "ansible-galaxy-token-", fmt.Sprintf("token: %q", p.Config.GalaxyAPIKey), 0600)
 		if err != nil {
 			return fmt.Errorf("could not create galaxy token file: %w", err)
@@ -575,6 +581,12 @@ func (p *Playbook) cleanupTempFiles() {
 	}
 	p.tempFiles = nil
 	p.galaxyTokenFile = ""
+}
+
+// galaxyTokenWanted reports whether a galaxy token file is needed: a key is
+// set and a galaxy install runs. Without an install the key stays in memory.
+func (c *Config) galaxyTokenWanted() bool {
+	return c.GalaxyAPIKey != "" && c.galaxyRequirementsFile() != ""
 }
 
 // galaxyRequirementsFile returns the effective galaxy requirements file:
@@ -630,8 +642,8 @@ func (p *Playbook) buildCommands(ctx context.Context) ([]*exec.Cmd, error) {
 // Each line starts with the ANSIBLE_* variables set from Config as KEY=VALUE,
 // e.g. "ANSIBLE_STRATEGY=free ansible-playbook ..."; ExtraEnv is not shown.
 // Values of sensitive flags (--extra-vars, --private-key, --vault-password-file)
-// and ANSIBLE_GALAXY_TOKEN_PATH are masked as in debug trace output; no temporary
-// files are written.
+// are masked as in debug trace output and the galaxy token file path is shown
+// as "******"; no temporary files are written.
 // This method works on a shallow copy of the Playbook so it does not mutate Config.
 func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 	// Work on a shallow copy so resolvePlaybooks does not mutate the caller's Config.
@@ -650,6 +662,9 @@ func (p *Playbook) CommandStrings(ctx context.Context) ([]string, error) {
 	}
 	if cp.Config.VaultPassword != "" {
 		cp.Config.VaultPasswordFile = "******"
+	}
+	if cp.Config.galaxyTokenWanted() {
+		cp.galaxyTokenFile = "******"
 	}
 
 	if err := cp.resolvePlaybooks(); err != nil {
@@ -997,13 +1012,12 @@ func (p *Playbook) ansibleCommand(ctx context.Context, inventories []string) *ex
 // sensitiveFlags lists command-line flags and environment variables whose
 // values should be masked in trace output.
 var sensitiveFlags = map[string]bool{
-	"--extra-vars":              true,
-	"-e":                        true,
-	"--vault-password-file":     true,
-	"--vault-pass-file":         true,
-	"--private-key":             true,
-	"--api-key":                 true,
-	"ANSIBLE_GALAXY_TOKEN_PATH": true,
+	"--extra-vars":          true,
+	"-e":                    true,
+	"--vault-password-file": true,
+	"--vault-pass-file":     true,
+	"--private-key":         true,
+	"--api-key":             true,
 }
 
 // trace prints the full command line to the configured TraceOutput (or os.Stdout).
@@ -1021,8 +1035,9 @@ func (p *Playbook) trace(cmd *exec.Cmd) {
 // arguments, with sensitive values masked.
 func (p *Playbook) commandLine(cmd *exec.Cmd) string {
 	var line []string
-	if p.Config.GalaxyAPIKey != "" {
-		// Empty in CommandStrings (no temp file); masked either way.
+	if p.galaxyTokenFile != "" {
+		// The path is not a secret: trace shows the real file, CommandStrings
+		// sets the "******" placeholder.
 		line = append(line, "ANSIBLE_GALAXY_TOKEN_PATH="+p.galaxyTokenFile)
 	}
 	line = append(line, buildCustomEnvVars(&p.Config)...)

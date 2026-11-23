@@ -2376,6 +2376,28 @@ func TestGalaxyAPIKeyViaTokenFile(t *testing.T) {
 	}
 }
 
+// TestGalaxyAPIKeyTokenFileGuards verifies that no token file is written
+// without a galaxy install and that an invalid UTF-8 key is rejected.
+func TestGalaxyAPIKeyTokenFileGuards(t *testing.T) {
+	tempDir := t.TempDir()
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.GalaxyAPIKey = "secret-token-123"
+
+	if err := pb.prepareTempFiles(); err != nil {
+		t.Fatalf("prepareTempFiles failed: %v", err)
+	}
+	if entries, _ := os.ReadDir(tempDir); len(entries) != 0 || pb.galaxyTokenFile != "" {
+		t.Errorf("token file written without galaxy install: %q", pb.galaxyTokenFile)
+	}
+
+	pb.Config.GalaxyFile = "requirements.yml"
+	pb.Config.GalaxyAPIKey = "bad\xff"
+	if err := pb.prepareTempFiles(); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Errorf("expected UTF-8 error, got %v", err)
+	}
+}
+
 // TestOutputCallback verifies that OutputCallback sets ANSIBLE_STDOUT_CALLBACK.
 func TestOutputCallback(t *testing.T) {
 	cfg := Config{
@@ -2704,6 +2726,11 @@ func TestExecRestoresSecretFilePaths(t *testing.T) {
 	pb.Config.PrivateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----"
 	pb.Config.VaultPasswordFile = "/caller/vault"
 	pb.Config.GalaxyAPIKey = "secret-token-123"
+	galaxyFile := filepath.Join(tempDir, "requirements.yml")
+	if err := os.WriteFile(galaxyFile, []byte("---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pb.Config.GalaxyFile = galaxyFile
 
 	if err := pb.Exec(context.Background()); err == nil {
 		t.Fatal("expected error for missing inventory")
@@ -2860,6 +2887,7 @@ func TestCommandStringsShowsEnvVars(t *testing.T) {
 	pb.Config.Inventories = []string{"localhost,"}
 	pb.Config.StrategyPlugin = "free"
 	pb.Config.ConfigFile = cfgFile
+	pb.Config.GalaxyFile = cfgFile // any existing file triggers the galaxy install
 	pb.Config.GalaxyAPIKey = "secret-token-123"
 
 	cmds, err := pb.CommandStrings(context.Background())
@@ -2874,17 +2902,17 @@ func TestCommandStringsShowsEnvVars(t *testing.T) {
 }
 
 // TestTraceShowsEnvVars verifies that the debug trace shows the ANSIBLE_*
-// environment variables before the command and masks the galaxy token.
+// environment variables before the command, including the galaxy token file path.
 func TestTraceShowsEnvVars(t *testing.T) {
 	pb := NewPlaybook()
 	pb.Config.StrategyPlugin = "free"
-	pb.Config.GalaxyAPIKey = "secret-token-123"
+	pb.galaxyTokenFile = "/tmp/ansible-galaxy-token-1"
 	var buf bytes.Buffer
 	pb.TraceOutput = &buf
 
 	pb.trace(exec.Command("ansible-playbook", "site.yml"))
 
-	want := "$ ANSIBLE_GALAXY_TOKEN_PATH=****** ANSIBLE_STRATEGY=free ansible-playbook site.yml\n"
+	want := "$ ANSIBLE_GALAXY_TOKEN_PATH=/tmp/ansible-galaxy-token-1 ANSIBLE_STRATEGY=free ansible-playbook site.yml\n"
 	if got := buf.String(); got != want {
 		t.Errorf("trace output = %q, want %q", got, want)
 	}

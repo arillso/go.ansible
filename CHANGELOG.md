@@ -17,15 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Color is no longer forced when `Stdout` is a custom writer such as `bytes.Buffer`
 - `CommandStrings` and the debug trace prefix each command with the `ANSIBLE_*` variables set
   from `Config` (e.g. `ANSIBLE_STRATEGY=free ansible-playbook ...`), so options passed via
-  environment are visible again; `ANSIBLE_GALAXY_TOKEN_PATH` is masked
+  environment are visible again; `CommandStrings` shows `******` for the galaxy token file path
 - `CommandStrings` returns an error for a missing `ConfigFile` like `Exec`; `Exec` reports a
   missing `ConfigFile` before a missing galaxy file, and the error wraps the `os.Stat` error
 
 ### Fixed
 
 - `GalaxyAPIKey` is written to a temp token file (mode `0600`) passed as
-  `ANSIBLE_GALAXY_TOKEN_PATH`; ansible-galaxy does not read the former `ANSIBLE_GALAXY_TOKEN`
-  variable, so the key never reached it
+  `ANSIBLE_GALAXY_TOKEN_PATH` when a galaxy install runs; ansible-galaxy does not read the
+  former `ANSIBLE_GALAXY_TOKEN` variable, so the key never reached it
 - `NoColor`, `StrategyPlugin`, `CallbacksEnabled`, `PollInterval`, `AnyErrorsFatal` and
   `SSHTransferMethod` are passed as `ANSIBLE_*` environment variables; ansible-playbook
   rejected the former CLI flags with `unrecognized arguments`
