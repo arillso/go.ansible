@@ -2297,29 +2297,21 @@ func TestCommandStringsDoesNotMutateConfig(t *testing.T) {
 	}
 }
 
-// TestGalaxyAPIKeyViaEnv verifies that GalaxyAPIKey is passed as an environment
-// variable (ANSIBLE_GALAXY_TOKEN) instead of a CLI argument, by exercising
-// runCommands with a real subprocess that prints its environment.
-func TestGalaxyAPIKeyViaEnv(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test-galaxy-apikey")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
+// TestGalaxyAPIKeyViaTokenFile verifies that GalaxyAPIKey is written to a
+// 0600 token file in TempDir whose path is passed as ANSIBLE_GALAXY_TOKEN_PATH,
+// not as a CLI argument and not as ANSIBLE_GALAXY_TOKEN (which ansible-galaxy
+// does not read), by exercising runCommands with a real subprocess that prints
+// its environment.
+func TestGalaxyAPIKeyViaTokenFile(t *testing.T) {
+	tempDir := t.TempDir()
 	galaxyFile := filepath.Join(tempDir, "requirements.yml")
 	if err := os.WriteFile(galaxyFile, []byte("---"), 0o600); err != nil {
 		t.Fatalf("Failed to write galaxy file: %v", err)
 	}
 
-	playbookFile := filepath.Join(tempDir, "test.yml")
-	if err := os.WriteFile(playbookFile, []byte("dummy"), 0o600); err != nil {
-		t.Fatalf("Failed to write playbook: %v", err)
-	}
-
 	pb := NewPlaybook()
 	pb.Config.TempDir = tempDir
-	pb.Config.Playbooks = []string{playbookFile}
+	pb.Config.Playbooks = []string{"arillso.test.site"}
 	pb.Config.Inventories = []string{getInventoryHost() + ","}
 	pb.Config.GalaxyFile = galaxyFile
 	pb.Config.GalaxyAPIKey = "secret-token-123"
@@ -2328,14 +2320,34 @@ func TestGalaxyAPIKeyViaEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildCommands failed: %v", err)
 	}
-
-	// Verify --api-key is NOT in any command args
 	for _, cmd := range cmds {
 		for _, arg := range cmd.Args {
-			if arg == "--api-key" || strings.HasPrefix(arg, "--api-key=") {
+			if arg == "--api-key" || arg == "--token" || strings.HasPrefix(arg, "--api-key=") || strings.HasPrefix(arg, "--token=") {
 				t.Errorf("GalaxyAPIKey should not appear as CLI arg, found in: %v", cmd.Args)
 			}
 		}
+	}
+
+	if err := pb.prepareTempFiles(); err != nil {
+		t.Fatalf("prepareTempFiles failed: %v", err)
+	}
+	tokenFile := pb.galaxyTokenFile
+	if filepath.Dir(tokenFile) != tempDir {
+		t.Errorf("token file %q not in TempDir %q", tokenFile, tempDir)
+	}
+	data, err := os.ReadFile(tokenFile)
+	if err != nil {
+		t.Fatalf("Failed to read token file: %v", err)
+	}
+	if want := "token: \"secret-token-123\"\n"; string(data) != want {
+		t.Errorf("token file content = %q, want %q", string(data), want)
+	}
+	info, err := os.Stat(tokenFile)
+	if err != nil {
+		t.Fatalf("Failed to stat token file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("token file mode = %o, want 600", perm)
 	}
 
 	// Exercise runCommands with a real command that prints its env,
@@ -2344,20 +2356,45 @@ func TestGalaxyAPIKeyViaEnv(t *testing.T) {
 	pb.Stdout = &stdout
 	pb.Stderr = &bytes.Buffer{}
 	envCmd := exec.CommandContext(context.Background(), "env")
-	err = pb.runCommands(context.Background(), []*exec.Cmd{envCmd})
-	if err != nil {
+	if err := pb.runCommands(context.Background(), []*exec.Cmd{envCmd}); err != nil {
 		t.Fatalf("runCommands failed: %v", err)
 	}
-
-	found := false
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if line == "ANSIBLE_GALAXY_TOKEN=secret-token-123" {
-			found = true
-			break
-		}
+	env := stdout.String()
+	if !strings.Contains(env, "ANSIBLE_GALAXY_TOKEN_PATH="+tokenFile+"\n") {
+		t.Errorf("expected ANSIBLE_GALAXY_TOKEN_PATH=%s in command environment:\n%s", tokenFile, env)
 	}
-	if !found {
-		t.Error("expected ANSIBLE_GALAXY_TOKEN=secret-token-123 in command environment")
+	if strings.Contains(env, "secret-token-123") {
+		t.Error("token leaked into command environment")
+	}
+
+	pb.cleanupTempFiles()
+	if _, err := os.Stat(tokenFile); !os.IsNotExist(err) {
+		t.Error("token file still exists after cleanup")
+	}
+	if pb.galaxyTokenFile != "" {
+		t.Errorf("galaxyTokenFile not reset: %q", pb.galaxyTokenFile)
+	}
+}
+
+// TestGalaxyAPIKeyTokenFileGuards verifies that no token file is written
+// without a galaxy install and that an invalid UTF-8 key is rejected.
+func TestGalaxyAPIKeyTokenFileGuards(t *testing.T) {
+	tempDir := t.TempDir()
+	pb := NewPlaybook()
+	pb.Config.TempDir = tempDir
+	pb.Config.GalaxyAPIKey = "secret-token-123"
+
+	if err := pb.prepareTempFiles(); err != nil {
+		t.Fatalf("prepareTempFiles failed: %v", err)
+	}
+	if entries, _ := os.ReadDir(tempDir); len(entries) != 0 || pb.galaxyTokenFile != "" {
+		t.Errorf("token file written without galaxy install: %q", pb.galaxyTokenFile)
+	}
+
+	pb.Config.GalaxyFile = "requirements.yml"
+	pb.Config.GalaxyAPIKey = "bad\xff"
+	if err := pb.prepareTempFiles(); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Errorf("expected UTF-8 error, got %v", err)
 	}
 }
 
@@ -2688,6 +2725,12 @@ func TestExecRestoresSecretFilePaths(t *testing.T) {
 	pb.Config.Inventories = []string{filepath.Join(tempDir, "missing-inventory")} // fails after temp files
 	pb.Config.PrivateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST-KEY-DATA\n-----END OPENSSH PRIVATE KEY-----"
 	pb.Config.VaultPasswordFile = "/caller/vault"
+	pb.Config.GalaxyAPIKey = "secret-token-123"
+	galaxyFile := filepath.Join(tempDir, "requirements.yml")
+	if err := os.WriteFile(galaxyFile, []byte("---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pb.Config.GalaxyFile = galaxyFile
 
 	if err := pb.Exec(context.Background()); err == nil {
 		t.Fatal("expected error for missing inventory")
@@ -2697,6 +2740,9 @@ func TestExecRestoresSecretFilePaths(t *testing.T) {
 	}
 	if pb.tempFiles != nil {
 		t.Errorf("tempFiles not reset: %v", pb.tempFiles)
+	}
+	if pb.galaxyTokenFile != "" {
+		t.Errorf("galaxyTokenFile not reset: %q", pb.galaxyTokenFile)
 	}
 }
 
@@ -2841,13 +2887,14 @@ func TestCommandStringsShowsEnvVars(t *testing.T) {
 	pb.Config.Inventories = []string{"localhost,"}
 	pb.Config.StrategyPlugin = "free"
 	pb.Config.ConfigFile = cfgFile
+	pb.Config.GalaxyFile = cfgFile // any existing file triggers the galaxy install
 	pb.Config.GalaxyAPIKey = "secret-token-123"
 
 	cmds, err := pb.CommandStrings(context.Background())
 	if err != nil {
 		t.Fatalf("CommandStrings failed: %v", err)
 	}
-	want := "ANSIBLE_GALAXY_TOKEN=****** ANSIBLE_CONFIG=" + cfgFile + " ANSIBLE_STRATEGY=free " +
+	want := "ANSIBLE_GALAXY_TOKEN_PATH=****** ANSIBLE_CONFIG=" + cfgFile + " ANSIBLE_STRATEGY=free " +
 		"ansible-playbook --inventory localhost, --forks 5 arillso.test.site"
 	if got := cmds[len(cmds)-1]; got != want {
 		t.Errorf("CommandStrings = %q, want %q", got, want)
@@ -2855,17 +2902,17 @@ func TestCommandStringsShowsEnvVars(t *testing.T) {
 }
 
 // TestTraceShowsEnvVars verifies that the debug trace shows the ANSIBLE_*
-// environment variables before the command and masks the galaxy token.
+// environment variables before the command, including the galaxy token file path.
 func TestTraceShowsEnvVars(t *testing.T) {
 	pb := NewPlaybook()
 	pb.Config.StrategyPlugin = "free"
-	pb.Config.GalaxyAPIKey = "secret-token-123"
+	pb.galaxyTokenFile = "/tmp/ansible-galaxy-token-1"
 	var buf bytes.Buffer
 	pb.TraceOutput = &buf
 
 	pb.trace(exec.Command("ansible-playbook", "site.yml"))
 
-	want := "$ ANSIBLE_GALAXY_TOKEN=****** ANSIBLE_STRATEGY=free ansible-playbook site.yml\n"
+	want := "$ ANSIBLE_GALAXY_TOKEN_PATH=/tmp/ansible-galaxy-token-1 ANSIBLE_STRATEGY=free ansible-playbook site.yml\n"
 	if got := buf.String(); got != want {
 		t.Errorf("trace output = %q, want %q", got, want)
 	}

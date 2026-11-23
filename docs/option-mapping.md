@@ -34,7 +34,7 @@ Most fields map to one flag; the doc comment names it: "maps to ansible-playbook
 | `PollInterval`       | `ANSIBLE_POLL_INTERVAL` (only when > 0)                                    |
 | `AnyErrorsFatal`     | `ANSIBLE_ANY_ERRORS_FATAL=True`                                            |
 | `SSHTransferMethod`  | `ANSIBLE_SSH_TRANSFER_METHOD`                                              |
-| `GalaxyAPIKey`       | `ANSIBLE_GALAXY_TOKEN`                                                     |
+| `GalaxyAPIKey`       | `ANSIBLE_GALAXY_TOKEN_PATH` (temp token file, only with a galaxy install)  |
 | `NoColor`            | `ANSIBLE_NOCOLOR=1`, drops an inherited `ANSIBLE_FORCE_COLOR`              |
 
 Order in the environment, later wins:
@@ -44,12 +44,13 @@ Order in the environment, later wins:
    `ANSIBLE_FORCE_COLOR=1` only when `Stdout` is an `*os.File` and `NO_COLOR` (or `ANSIBLE_NOCOLOR`
    if `NO_COLOR` is unset) is not true. An inherited `ANSIBLE_FORCE_COLOR` is passed through and
    `nocolor` in `ansible.cfg` is not read; `NoColor` turns color off in both cases
-3. `ANSIBLE_GALAXY_TOKEN`
+3. `ANSIBLE_GALAXY_TOKEN_PATH`
 4. The remaining variables from the table above, from `ConfigFile` to `SSHTransferMethod`
 5. `ExtraEnv`, sorted by key, so it can override everything before it
 
-`trace` and `CommandStrings` show steps 3 and 4 as a `KEY=VALUE` prefix before each command, with
-`ANSIBLE_GALAXY_TOKEN` masked. The inherited environment, the color and progress variables and `ExtraEnv` are not shown.
+`trace` and `CommandStrings` show steps 3 and 4 as a `KEY=VALUE` prefix before each command;
+`CommandStrings` writes no token file and shows `******` as its path. The inherited environment, the
+color and progress variables and `ExtraEnv` are not shown.
 
 ## Temp files
 
@@ -57,6 +58,7 @@ Order in the environment, later wins:
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PrivateKey`    | Written to `TempDir` (mode `0600`), passed as `--private-key`; takes precedence over `PrivateKeyFile`. Must be PEM with `BEGIN`/`END … PRIVATE KEY` markers, otherwise `Exec` fails; CRLF is normalized to LF |
 | `VaultPassword` | Written to `TempDir` (mode `0600`), passed as `--vault-password-file`; takes precedence over `VaultPasswordFile`                                                                                              |
+| `GalaxyAPIKey`  | Written to `TempDir` (mode `0600`) as the YAML token file `ansible-galaxy` reads, passed as `ANSIBLE_GALAXY_TOKEN_PATH`; only when `GalaxyFile`/`GalaxyRequirementsFile` triggers an install; must be UTF-8   |
 
 The files are removed after `Exec`. Set `TempDir` to a tmpfs mount if secrets must not reach persistent disk.
 

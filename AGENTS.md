@@ -26,8 +26,9 @@ struct. Consumers embed it, so every exported identifier is public API.
 - **Secrets in output.** `trace` and `CommandStrings` show the `ANSIBLE_*` variables from `Config` before the command
   and mask values of flags and variables listed in `sensitiveFlags`. A new flag or variable that carries a secret goes
   into that map.
-- **Temp files.** `PrivateKey` and `VaultPassword` are written to `Config.TempDir` with mode `0600`; `Exec` restores
-  the caller's `PrivateKeyFile`/`VaultPasswordFile` afterwards so a reused `Playbook` does not point at a deleted file.
+- **Temp files.** `PrivateKey`, `VaultPassword` and `GalaxyAPIKey` are written to `Config.TempDir` with mode `0600`;
+  `Exec` restores the caller's `PrivateKeyFile`/`VaultPasswordFile` afterwards so a reused `Playbook` does not point
+  at a deleted file.
 - **Global test state.** `chmodFile` and `runCmd` are package variables that tests swap out. Tests touching them run
   without `t.Parallel()`.
 - **Examples are tests.** The `// Output:` lines in `example_test.go` are checked by `go test`; a change to argument
