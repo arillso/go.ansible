@@ -37,8 +37,7 @@ struct. Consumers embed it, so every exported identifier is public API.
 
 ## Automation
 
-- `lefthook install` once per clone: pre-commit runs prettier, yamllint, markdownlint, `gofmt`, `go vet`, actionlint
-  and gitleaks; pre-push runs `go test ./...` and a full gitleaks scan.
+- `lefthook install` once per clone. What the hooks run and how a `vX.Y.Z` tag releases through
+  `tag.yml`: see `CONTRIBUTING.md`.
 - Pull requests run the `arillso/.github` reusables for Go CI, lint, secret and dependency scans, plus a Claude
   review. Before reviewing or preparing a PR, read `REVIEW.md`; the review job follows it.
-- A SemVer tag `vX.Y.Z` triggers `tag.yml`: build, test, GitHub Release and SBOM.
